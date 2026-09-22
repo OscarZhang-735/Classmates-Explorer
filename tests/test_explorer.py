@@ -214,6 +214,21 @@ async def test_budget(tmp_path, kwargs):
     store.engine.dispose()
 
 
+async def test_unlimited_mode_ignores_application_budget_and_fork_cap(tmp_path):
+    config = settings(tmp_path, max_forks=1, max_task_requests=1, max_task_points=1)
+    fake = FakeGitHub([[fork(1)], [fork(2)]])
+    store = Store(config.database_url)
+    github = GitHubClient(config, store, httpx.MockTransport(fake))
+    task = store.create("https://github.com/up/repo", config.credential_id, 2_147_483_647, True)
+    await Runner(config, store, github).run(task["id"])
+    result = store.get(task["id"])
+    assert result["status"] == "completed" and result["unlimited"] is True
+    assert result["truncated"] is False and len(store.rows(task["id"])) == 2
+    assert result["requests"] > config.max_task_requests
+    await github.close()
+    store.engine.dispose()
+
+
 async def test_secondary_rate_limit(tmp_path):
     config = settings(tmp_path, max_consecutive_rate_limits=2)
     store = Store(config.database_url)

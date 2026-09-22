@@ -108,7 +108,9 @@ class GitHubClient:
             retries = 0
             while True:
                 task = self.check(task_id)
-                if task["requests"] >= self.settings.max_task_requests or task["points"] >= self.settings.max_task_points:
+                if (not task.get("unlimited", False)
+                        and (task["requests"] >= self.settings.max_task_requests
+                             or task["points"] >= self.settings.max_task_points)):
                     raise GitHubError("budget_exhausted", "已达到本次运行的 GitHub 查询预算")
                 await self.wait_cooldown(task_id)
                 await self.pause(task_id, max(0, self.settings.github_request_interval - (time.monotonic() - self.last_start)))
@@ -146,7 +148,10 @@ class GitHubClient:
                 except (TypeError, ValueError):
                     remaining = None
                 reset = self.reset_time(response.headers, rate)
-                if remaining is not None and remaining < self.settings.rate_limit_reserve:
+                reserve_reached = (remaining is not None and
+                                   (remaining <= 0 if task.get("unlimited", False)
+                                    else remaining < self.settings.rate_limit_reserve))
+                if reserve_reached:
                     self.cooldown(max(time.time() + 1, reset + 1))
                 # Never expose raw GitHub errors or credential-bearing transport exceptions.
                 error_text = " ".join(str(e.get("message", "")) + " " + str(e.get("type", "")) for e in errors).lower()

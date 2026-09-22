@@ -70,7 +70,7 @@ class Store:
                 query = query.where(Task.status.in_(statuses))
             return [self.serialize(t) for t in session.scalars(query)]
 
-    def create(self, url: str, credential: str, limit: int) -> dict:
+    def create(self, url: str, credential: str, limit: int, unlimited: bool = False) -> dict:
         now = datetime.now(timezone.utc)
         # A fixed daily UTC endpoint makes same-day jobs/cache intervals identical.
         end = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -79,6 +79,7 @@ class Store:
                     status="queued", created_at=now.timestamp(), updated_at=now.timestamp(),
                     payload={"phase": "repository", "from": iso(end - timedelta(days=365)),
                              "to": iso(end), "date": end.date().isoformat(), "limit": limit,
+                             "unlimited": unlimited,
                              "data_version": 2,
                              "cursor": None, "forks_done": False, "total_direct_forks": None,
                              "truncated": False, "error": None, "retryable": True,
@@ -99,6 +100,7 @@ class Store:
         task_id = uuid.uuid4().hex
         payload = {"phase": "imported", "from": task_data["from"], "to": task_data["to"],
                    "date": task_data["to"][:10], "limit": task_data["limit"], "cursor": None,
+                   "unlimited": task_data.get("unlimited", False),
                    "data_version": task_data.get("data_version", 1),
                    "forks_done": task_data["forks_done"],
                    "total_direct_forks": task_data["total_direct_forks"],

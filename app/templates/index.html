@@ -20,6 +20,8 @@
       <div class="token-fields input-row"><input id="github-token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Paste a GitHub token" autocomplete="new-password">
       <button id="reveal-token" type="button" class="secondary" data-i18n="showToken">Show token</button>
       <button id="save-token" type="button" class="secondary" data-i18n="saveToken">Save token</button></div>
+      <div class="mode-setting"><div><label for="unlimited-mode" data-i18n="unlimitedMode">Unlimited mode</label><small data-i18n="unlimitedDescription">Use available GitHub points and continue after each hourly reset.</small></div>
+        <input id="unlimited-mode" type="checkbox" role="switch" data-enabled="{{ 'true' if unlimited_mode else 'false' }}"{% if unlimited_mode %} checked{% endif %}></div>
     </details></form>
   <div class="data-actions"><button id="export-json" type="button" class="secondary" disabled data-i18n="exportJson">Export JSON</button>
     <button id="export-csv" type="button" class="secondary" disabled data-i18n="exportCsv">Export CSV</button>

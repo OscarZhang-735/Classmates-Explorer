@@ -7,8 +7,8 @@ let lastTask = null, lastResult = null, lastError = '';
 const messages = {
   'zh-CN': {
     title:'Classmates Explorer · Fork 探索',language:'语言',apiDocs:'API 文档 ↗',themeLight:'☀ 浅色模式',themeDark:'☾ 深色模式',intro:'查询公开仓库的 Fork、所有者资料和贡献。',
-    tokenNotice:'请在服务端配置 GITHUB_TOKEN 并重启。',tokenConfig:'GitHub API 配置',tokenConfigured:'已配置',tokenNotConfigured:'未配置',tokenPlaceholder:'粘贴 GitHub Token',saveToken:'保存 Token',showToken:'显示 Token',hideToken:'隐藏 Token',confirmRevealToken:'Token 属于敏感凭据。确定显示原文吗？',repositoryUrl:'公开仓库 URL',explore:'探索 Fork →',
-    limitNote:'⚠ 最多显示最新 {0} 个一级 Fork',importJson:'导入 JSON 快照',
+    tokenNotice:'请在服务端配置 GITHUB_TOKEN 并重启。',tokenConfig:'GitHub API 配置',tokenConfigured:'Token 已配置',tokenNotConfigured:'未配置',tokenPlaceholder:'粘贴 GitHub Token',saveToken:'保存 Token',showToken:'显示 Token',hideToken:'隐藏 Token',confirmRevealToken:'Token 属于敏感凭据。确定显示原文吗？',repositoryUrl:'公开仓库 URL',explore:'探索 Fork →',
+    limitNote:'⚠ 最多显示最新 {0} 个一级 Fork，并遵守默认API限流策略。',unlimitedLimitNote:'⚠ 无限制模式：使用所有可用的 GitHub API points',unlimitedMode:'无限制模式（不推荐）',unlimitedDescription:'使用可用 GitHub points，额度每小时重置后继续。',importJson:'导入 JSON 快照',
     preparing:'准备查询',exportJson:'导出 JSON',exportCsv:'导出 CSV',exportWhenDone:'查询完成后可导出',retry:'重试未完成部分',cancel:'取消任务',
     searchUsername:'搜索用户名',usernamePlaceholder:'输入 GitHub 用户名',sort:'排序',sortForkDesc:'Fork 时间：新 → 旧',sortForkAsc:'Fork 时间：旧 → 新',
     sortContribDesc:'贡献总数：高 → 低',sortContribAsc:'贡献总数：低 → 高',sortReposDesc:'公开仓库数：高 → 低',sortReposAsc:'公开仓库数：低 → 高',
@@ -25,8 +25,8 @@ const messages = {
   },
   en: {
     title:'Classmates Explorer · Explore Forks',language:'Language',apiDocs:'API docs ↗',themeLight:'☀ Light mode',themeDark:'☾ Dark mode',intro:'Explore public-repo forks, owner profiles, and contributions.',
-    tokenNotice:'Set GITHUB_TOKEN on the server and restart.',tokenConfig:'GitHub API settings',tokenConfigured:'Configured',tokenNotConfigured:'Not configured',tokenPlaceholder:'Paste a GitHub token',saveToken:'Save token',showToken:'Show token',hideToken:'Hide token',confirmRevealToken:'Tokens are sensitive credentials. Show the full token?',repositoryUrl:'Public repository URL',explore:'Explore forks →',
-    limitNote:'⚠ Up to {0} newest direct forks.',importJson:'Import JSON snapshot',
+    tokenNotice:'Set GITHUB_TOKEN on the server and restart.',tokenConfig:'GitHub API settings',tokenConfigured:'Token Configured',tokenNotConfigured:'Not configured',tokenPlaceholder:'Paste a GitHub token',saveToken:'Save token',showToken:'Show token',hideToken:'Hide token',confirmRevealToken:'Tokens are sensitive credentials. Show the full token?',repositoryUrl:'Public repository URL',explore:'Explore forks →',
+    limitNote:'⚠ Up to {0} newest direct forks, and comply with the default API rate limiting policy.',unlimitedLimitNote:'⚠ Unlimited mode: uses all available GitHub API points',unlimitedMode:'Unlimited mode (Not Recommended)',unlimitedDescription:'Uses available GitHub points and continues after each hourly reset.',importJson:'Import JSON snapshot',
     preparing:'Preparing query',exportJson:'Export JSON',exportCsv:'Export CSV',exportWhenDone:'Available after the query completes',retry:'Retry unfinished work',cancel:'Cancel task',
     searchUsername:'Search username',usernamePlaceholder:'Enter a GitHub username',sort:'Sort by',sortForkDesc:'Fork date: newest first',sortForkAsc:'Fork date: oldest first',
     sortContribDesc:'Contributions: highest first',sortContribAsc:'Contributions: lowest first',sortReposDesc:'Public repositories: most first',sortReposAsc:'Public repositories: fewest first',
@@ -91,6 +91,11 @@ function renderTokenStatus(configured) {
   $('reveal-token').hidden = !configured;
   $('reveal-token').textContent = t($('github-token').type === 'text' ? 'hideToken' : 'showToken');
 }
+function renderUnlimitedMode(enabled) {
+  $('unlimited-mode').checked = enabled;
+  $('unlimited-mode').dataset.enabled = String(enabled);
+  $('limit-note').textContent = enabled ? t('unlimitedLimitNote') : t('limitNote', $('limit-note').dataset.limit);
+}
 function applyLanguage() {
   document.documentElement.lang = language;
   document.title = t('title');
@@ -99,8 +104,8 @@ function applyLanguage() {
   $('language').setAttribute('aria-label', t('language'));
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
   for (const node of document.querySelectorAll('[data-i18n-placeholder]')) node.placeholder = t(node.dataset.i18nPlaceholder);
-  $('limit-note').textContent = t('limitNote', $('limit-note').dataset.limit);
   renderTokenStatus($('token-status').dataset.configured === 'true');
+  renderUnlimitedMode($('unlimited-mode').dataset.enabled === 'true');
   applyTheme();
   if (lastTask) renderTask(lastTask);
   if (lastResult) renderResults(lastResult);
@@ -247,6 +252,22 @@ $('reveal-token').onclick = async () => {
 };
 $('github-token').onkeydown = (event) => {
   if (event.key === 'Enter') { event.preventDefault(); saveToken(); }
+};
+$('token-config').ontoggle = () => {
+  if (!$('token-config').open && $('github-token').type === 'text') {
+    $('github-token').type = 'password'; $('github-token').value = '';
+    $('reveal-token').textContent = t('showToken');
+  }
+};
+$('unlimited-mode').onchange = async () => {
+  const previous = $('unlimited-mode').dataset.enabled === 'true';
+  const enabled = $('unlimited-mode').checked;
+  $('unlimited-mode').disabled = true; error('');
+  try {
+    const result = await api('/api/config/github/unlimited', {method:'POST', body:JSON.stringify({enabled})});
+    renderUnlimitedMode(result.enabled);
+  } catch (e) { renderUnlimitedMode(previous); error(e.message); }
+  finally { $('unlimited-mode').disabled = false; }
 };
 $('import').onclick = () => $('import-file').click();
 $('import-file').onchange = async () => {

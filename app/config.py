@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     github_token: SecretStr = SecretStr("")
+    unlimited_mode: bool = False
     database_url: str = "sqlite:///./explorer.sqlite3"
     max_forks: int = Field(1000, ge=1, le=1000)
     max_import_bytes: int = Field(10 * 1024 * 1024, ge=1024)

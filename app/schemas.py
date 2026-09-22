@@ -44,6 +44,10 @@ class TokenInput(BaseModel):
         return value
 
 
+class UnlimitedModeInput(BaseModel):
+    enabled: bool
+
+
 class ImportOwner(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=200)
@@ -147,7 +151,8 @@ class ImportTask(BaseModel):
     to: datetime
     total_direct_forks: int | None = Field(None, ge=0)
     truncated: bool
-    limit: int = Field(ge=1, le=1000)
+    limit: int = Field(ge=1, le=2_147_483_647)
+    unlimited: bool = False
     forks_done: bool
     data_version: int = Field(1, ge=1, le=2)
 
@@ -177,7 +182,7 @@ class ImportSnapshot(BaseModel):
     version: Literal[1]
     exported_at: datetime
     task: ImportTask
-    results: list[ImportFork] = Field(max_length=1000)
+    results: list[ImportFork]
 
     @model_validator(mode="after")
     def consistent(self):

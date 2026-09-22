@@ -18,11 +18,12 @@ from fastapi.templating import Jinja2Templates
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import GitHubClient
-from app.schemas import ImportSnapshot, TaskInput, TokenInput
+from app.schemas import ImportSnapshot, TaskInput, TokenInput, UnlimitedModeInput
 from app.services import Runner
 from pydantic import SecretStr, ValidationError
 
 ROOT = Path(__file__).parent
+UNLIMITED_TASK_LIMIT = 2_147_483_647
 
 
 def create_app(settings: Settings | None = None, transport=None, start_worker=True):
@@ -49,6 +50,24 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
     templates = Jinja2Templates(directory=ROOT / "templates")
 
+    def write_env_value(key: str, value: str):
+        env_path = Path(".env")
+        lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+        replacement = f"{key}={value}"
+        updated, found = [], False
+        for line in lines:
+            if line.lstrip().startswith(f"{key}="):
+                if not found:
+                    updated.append(replacement)
+                    found = True
+            else:
+                updated.append(line)
+        if not found:
+            updated.append(replacement)
+        temporary = env_path.with_suffix(".env.tmp")
+        temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+        temporary.replace(env_path)
+
     @app.middleware("http")
     async def same_origin(request: Request, call_next):
         # Local write endpoints must not accept cross-site form/fetch submissions.
@@ -62,37 +81,30 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     async def home(request: Request):
         return templates.TemplateResponse(request=request, name="index.html", context={
             "configured": bool(settings.github_token.get_secret_value()), "limit": settings.max_forks,
+            "unlimited_mode": settings.unlimited_mode,
             "max_import_bytes": settings.max_import_bytes,
             "max_import_mb": settings.max_import_bytes // 1024 // 1024})
 
     @app.get("/api/config/github", include_in_schema=False)
     async def github_config_status():
-        return {"configured": bool(settings.github_token.get_secret_value())}
+        return {"configured": bool(settings.github_token.get_secret_value()),
+                "unlimited_mode": settings.unlimited_mode}
 
     @app.post("/api/config/github", include_in_schema=False)
     async def configure_github(body: TokenInput):
         if app.state.store.tasks(ACTIVE):
             raise HTTPException(409, "任务运行期间不能更换 GitHub Token")
         token = body.token.get_secret_value()
-        env_path = Path(".env")
-        lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-        replacement = f"GITHUB_TOKEN={token}"
-        updated, found = [], False
-        for line in lines:
-            if line.lstrip().startswith("GITHUB_TOKEN="):
-                if not found:
-                    updated.append(replacement)
-                    found = True
-            else:
-                updated.append(line)
-        if not found:
-            updated.append(replacement)
-        temporary = env_path.with_suffix(".env.tmp")
-        temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
-        temporary.replace(env_path)
+        write_env_value("GITHUB_TOKEN", token)
         settings.github_token = SecretStr(token)
         app.state.runner.github.update_token(token)
         return {"configured": True}
+
+    @app.post("/api/config/github/unlimited", include_in_schema=False)
+    async def configure_unlimited_mode(body: UnlimitedModeInput):
+        write_env_value("UNLIMITED_MODE", "true" if body.enabled else "false")
+        settings.unlimited_mode = body.enabled
+        return {"enabled": settings.unlimited_mode}
 
     @app.post("/api/config/github/reveal", include_in_schema=False)
     async def reveal_github_token():
@@ -114,7 +126,9 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         value["progress"] = {"forks_fetched": len(rows), "owners_total": len(owners),
                              "owners_completed": sum(v in ("completed", "not_applicable") for v in owners.values()),
                              "owners_failed": sum(v == "failed" for v in owners.values())}
-        value["omitted_forks"] = max(0, (task["total_direct_forks"] or 0) - task["limit"])
+        value["unlimited"] = task.get("unlimited", False)
+        value["omitted_forks"] = (0 if value["unlimited"] else
+                                  max(0, (task["total_direct_forks"] or 0) - task["limit"]))
         return value
 
     def export_snapshot(task, rows):
@@ -124,7 +138,8 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                          "canonical_url": task.get("canonical_url"), "source_status": task["status"],
                          "from": task["from"], "to": task["to"],
                          "total_direct_forks": task["total_direct_forks"],
-                         "truncated": task["truncated"], "limit": min(task["limit"], 1000),
+                         "truncated": task["truncated"], "limit": task["limit"],
+                         "unlimited": task.get("unlimited", False),
                          "forks_done": task["forks_done"], "data_version": task.get("data_version", 1)},
                 "results": sorted(rows, key=lambda row: (row["created_at"], row["id"]), reverse=True)}
 
@@ -158,9 +173,12 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         async with app.state.submit_lock:
             admission(request)
             today = datetime.now(timezone.utc).date().isoformat()
+            unlimited = settings.unlimited_mode
+            limit = UNLIMITED_TASK_LIMIT if unlimited else settings.max_forks
             for task in reversed(app.state.store.tasks()):
                 if (task["repository_url"] == body.repository_url and task["date"] == today
-                        and task["credential_id"] == settings.credential_id and task["limit"] == settings.max_forks
+                        and task["credential_id"] == settings.credential_id and task["limit"] == limit
+                        and task.get("unlimited", False) == unlimited
                         and task.get("data_version") == 2):
                     cached = (task["status"] == "completed" and
                               time.time() - (task["completed_at"] or 0) < settings.result_cache_seconds)
@@ -169,7 +187,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             if not settings.github_token.get_secret_value():
                 raise HTTPException(503, "请先在服务端 .env 中配置 GITHUB_TOKEN")
             check_queue()
-            task = app.state.store.create(body.repository_url, settings.credential_id, settings.max_forks)
+            task = app.state.store.create(body.repository_url, settings.credential_id, limit, unlimited)
             app.state.runner.wake.set()
             return {**public_task(task), "reused": False}
 

@@ -54,6 +54,10 @@ small { display: block; font-size: 12px; margin-top: 12px; }
 .token-config[open] summary::before { transform: rotate(90deg); }
 .token-config summary span:first-of-type { margin-right: auto; }
 .token-fields { margin-top: 14px; }
+.mode-setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.mode-setting label { display: block; margin: 0 0 3px; }
+.mode-setting small { margin: 0; }
+.mode-setting input[role="switch"] { width: 38px; height: 20px; margin: 0; padding: 0; accent-color: var(--green); cursor: pointer; flex: 0 0 auto; }
 .status-badge { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: #ffebe9; color: #a40e26; }
 .status-badge.configured { background: #dafbe1; color: #116329; }
 .data-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
