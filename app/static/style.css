@@ -61,6 +61,8 @@ small { display: block; font-size: 12px; margin-top: 12px; }
 .status-badge { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: #ffebe9; color: #a40e26; }
 .status-badge.configured { background: #dafbe1; color: #116329; }
 .data-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.icon-button { display: inline-flex; align-items: center; gap: 7px; }
+.icon-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #task-panel { margin-top: 38px; }
 .task-heading { flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .task-heading > div { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -73,6 +75,10 @@ small { display: block; font-size: 12px; margin-top: 12px; }
 .filter-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; }
 .date-filter { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 .date-filter strong { grid-column: 1 / -1; font-size: 12px; font-weight: 700; color: var(--fg-muted); }
+.date-filter-heading { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.date-filter-heading strong { grid-column: auto; }
+.date-filter-heading .within-year { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.date-filter-heading .within-year input { width: auto; min-width: 0; margin: 0; padding: 0; }
 .date-filter label { display: contents; }
 .date-filter input { width: 100%; min-width: 0; padding: 7px; }
 .filter-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; width: 100%; }

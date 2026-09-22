@@ -4,8 +4,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Classmates Explorer · Explore Forks</title>
   <script>document.documentElement.dataset.theme = localStorage.getItem('explorer-theme') === 'light' ? 'light' : 'dark';</script>
-  <link rel="stylesheet" href="/static/style.css?v=7">
-  <script src="/static/app.js?v=7" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=9">
+  <script src="/static/app.js?v=9" defer></script>
 </head>
 <body>
 <main>
@@ -14,7 +14,7 @@
     <p data-i18n="intro">Explore public-repo forks, owner profiles, and contributions from the past year.</p></section>
   <form id="query-form"><label for="repo-url" data-i18n="repositoryUrl">公开仓库 URL</label><div class="input-row">
     <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required autocomplete="off">
-    <button id="submit" type="submit" data-i18n="explore">探索 Fork →</button></div>
+    <button id="submit" type="submit" data-i18n="explore">探索</button></div>
     <small id="limit-note" data-limit="{{ limit }}"></small>
     <details id="token-config" class="token-config"><summary><span data-i18n="tokenConfig">GitHub API settings</span><span id="token-status" class="status-badge" data-configured="{{ 'true' if configured else 'false' }}"></span></summary>
       <div class="token-fields input-row"><input id="github-token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Paste a GitHub token" autocomplete="new-password">
@@ -23,9 +23,9 @@
       <div class="mode-setting"><div><label for="unlimited-mode" data-i18n="unlimitedMode">Unlimited mode</label><small data-i18n="unlimitedDescription">Use available GitHub points and continue after each hourly reset.</small></div>
         <input id="unlimited-mode" type="checkbox" role="switch" data-enabled="{{ 'true' if unlimited_mode else 'false' }}"{% if unlimited_mode %} checked{% endif %}></div>
     </details></form>
-  <div class="data-actions"><button id="export-json" type="button" class="secondary" disabled data-i18n="exportJson">Export JSON</button>
-    <button id="export-csv" type="button" class="secondary" disabled data-i18n="exportCsv">Export CSV</button>
-    <button id="import" type="button" class="secondary" data-i18n="importJson">Import JSON snapshot</button>
+  <div class="data-actions"><button id="export-json" type="button" class="secondary icon-button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span data-i18n="exportJson">Export JSON</span></button>
+    <button id="export-csv" type="button" class="secondary icon-button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span data-i18n="exportCsv">Export CSV</span></button>
+    <button id="import" type="button" class="secondary icon-button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21V9m0 0 4 4m-4-4-4 4M5 5h14"/></svg><span data-i18n="importJson">Import JSON snapshot</span></button>
     <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="{{ max_import_bytes }}" hidden></div>
   <p id="error" role="alert" hidden></p>
   <section id="task-panel" hidden aria-live="polite">
@@ -46,7 +46,7 @@
       </select></label></div>
       <div class="filter-dates">
         <div class="date-filter"><strong data-i18n="accountCreatedTime">账号创建时间</strong><label><span data-i18n="from">从</span><input id="account-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="account-created-to" type="date"></label></div>
-        <div class="date-filter"><strong data-i18n="forkCreatedTime">Fork 创建时间</strong><label><span data-i18n="from">从</span><input id="fork-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="fork-created-to" type="date"></label></div>
+        <div class="date-filter"><div class="date-filter-heading"><strong data-i18n="forkCreatedTime">Fork 创建时间</strong><label class="within-year"><input id="fork-within-year" type="checkbox"><span data-i18n="withinYear">仅限一年内</span></label></div><label><span data-i18n="from">从</span><input id="fork-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="fork-created-to" type="date"></label></div>
       </div>
       <div class="filter-actions"><label class="score-scaling"><input id="scale-scores" type="checkbox"><span data-i18n="scaleScores">曲线缩放</span></label><button id="clear-filters" type="button" class="secondary" data-i18n="clearFilters">清除筛选</button></div>
     </div>

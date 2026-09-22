@@ -16,13 +16,13 @@ const messages = {
     score_stars:'代表作 Stars',score_collaboration:'PR / Review / Issue 协作',score_account_age:'账号年限',score_original_repositories:'非 Fork 公开仓库',score_public_contributions:'公开贡献估计值',score_total_contributions:'贡献总量',score_consistency:'活跃周数',score_recency:'最近贡献',
     publicEstimate:'公开贡献估计值 {0}',calendarStats:'活跃周 {0} · 最近贡献 {1}',
     title:'Classmates Explorer · Fork 探索',language:'语言',apiDocs:'API 文档 ↗',themeLight:'☀ 浅色模式',themeDark:'☾ 深色模式',intro:'查询公开仓库的 Fork、所有者资料和贡献。',
-    tokenNotice:'请在服务端配置 GITHUB_TOKEN 并重启。',tokenConfig:'GitHub API 配置',tokenConfigured:'Token 已配置',tokenNotConfigured:'未配置',tokenPlaceholder:'粘贴 GitHub Token',saveToken:'保存 Token',showToken:'显示 Token',hideToken:'隐藏 Token',confirmRevealToken:'Token 属于敏感凭据。确定显示原文吗？',repositoryUrl:'公开仓库 URL',explore:'探索 Fork →',
+    tokenNotice:'请在服务端配置 GITHUB_TOKEN 并重启。',tokenConfig:'GitHub API 配置',tokenConfigured:'Token 已配置',tokenNotConfigured:'未配置',tokenPlaceholder:'粘贴 GitHub Token',saveToken:'保存 Token',showToken:'显示 Token',hideToken:'隐藏 Token',confirmRevealToken:'Token 属于敏感凭据。确定显示原文吗？',repositoryUrl:'公开仓库 URL',explore:'探索',
     limitNote:'⚠ 最多显示最新 {0} 个一级 Fork，并遵守默认API限流策略。',unlimitedLimitNote:'⚠ 无限制模式：使用所有可用的 GitHub API points',unlimitedMode:'无限制模式（不推荐）',unlimitedDescription:'使用可用 GitHub points，额度每小时重置后继续。',importJson:'导入 JSON 快照',
     preparing:'准备查询',exportJson:'导出 JSON',exportCsv:'导出 CSV',exportWhenDone:'查询完成后可导出',retry:'重试未完成部分',cancel:'取消任务',
     searchUsername:'搜索用户名',usernamePlaceholder:'输入 GitHub 用户名',sort:'排序',sortForkDesc:'Fork 时间：新 → 旧',sortForkAsc:'Fork 时间：旧 → 新',
     sortContribDesc:'贡献总数：高 → 低',sortContribAsc:'贡献总数：低 → 高',sortReposDesc:'公开仓库数：高 → 低',sortReposAsc:'公开仓库数：低 → 高',
     sortStarsDesc:'Fork Star 数：高 → 低',sortStarsAsc:'Fork Star 数：低 → 高',sortAccountDesc:'账号创建：新 → 旧',sortAccountAsc:'账号创建：旧 → 新',
-    accountCreated:'账号创建',forkCreated:'Fork 创建',accountCreatedTime:'账号创建时间',forkCreatedTime:'Fork 创建时间',from:'从',to:'至',clearFilters:'清除筛选',forkRepository:'Fork 仓库',owner:'所有者',
+    accountCreated:'账号创建',forkCreated:'Fork 创建',accountCreatedTime:'账号创建时间',forkCreatedTime:'Fork 创建时间',withinYear:'仅限一年内',from:'从',to:'至',clearFilters:'清除筛选',forkRepository:'Fork 仓库',owner:'所有者',
     basicInfo:'基本信息',yearContributions:'近一年全站贡献',previous:'上一页',next:'下一页',dataCaveat:'数据以 GitHub API 为准，含用户选择公开的私有贡献。总数可能与分类之和不同，采集期间数据也可能变化。',
     footer:'OscarZhang-735',created:'创建 {0}',pushed:'推送 {0}',noCompanyLocation:'未填写公司或地区',accountCreated:'账号创建 {0}',repositoryStats:'公开仓库 {0}（非 Fork：{1}）',
     profileCollected:'资料采集 {0}',restricted:'受限贡献 {0}',collected:'采集 {0}',contributionBreakdown:'Commit {0} · PR {1} · Issue {2} · Review {3}',userType:'个人账号',organizationType:'组织',noResults:'暂无结果',pageLabel:'共 {0} 条 · 第 {1} / {2} 页',
@@ -43,13 +43,13 @@ const messages = {
     score_stars:'Portfolio stars',score_collaboration:'PR / review / issue collaboration',score_account_age:'Account age',score_original_repositories:'Public non-fork repositories',score_public_contributions:'Estimated public contributions',score_total_contributions:'Total contributions',score_consistency:'Active weeks',score_recency:'Recent contribution',
     publicEstimate:'Estimated public contributions {0}',calendarStats:'Active weeks {0} · Last contribution {1}',
     title:'Classmates Explorer · Explore Forks',language:'Language',apiDocs:'API docs ↗',themeLight:'☀ Light mode',themeDark:'☾ Dark mode',intro:'Explore public-repo forks, owner profiles, and contributions.',
-    tokenNotice:'Set GITHUB_TOKEN on the server and restart.',tokenConfig:'GitHub API settings',tokenConfigured:'Token Configured',tokenNotConfigured:'Not configured',tokenPlaceholder:'Paste a GitHub token',saveToken:'Save token',showToken:'Show token',hideToken:'Hide token',confirmRevealToken:'Tokens are sensitive credentials. Show the full token?',repositoryUrl:'Public repository URL',explore:'Explore forks →',
+    tokenNotice:'Set GITHUB_TOKEN on the server and restart.',tokenConfig:'GitHub API settings',tokenConfigured:'Token Configured',tokenNotConfigured:'Not configured',tokenPlaceholder:'Paste a GitHub token',saveToken:'Save token',showToken:'Show token',hideToken:'Hide token',confirmRevealToken:'Tokens are sensitive credentials. Show the full token?',repositoryUrl:'Public repository URL',explore:'Explore',
     limitNote:'⚠ Up to {0} newest direct forks, and comply with the default API rate limiting policy.',unlimitedLimitNote:'⚠ Unlimited mode: uses all available GitHub API points',unlimitedMode:'Unlimited mode (Not Recommended)',unlimitedDescription:'Uses available GitHub points and continues after each hourly reset.',importJson:'Import JSON snapshot',
     preparing:'Preparing query',exportJson:'Export JSON',exportCsv:'Export CSV',exportWhenDone:'Available after the query completes',retry:'Retry unfinished work',cancel:'Cancel task',
     searchUsername:'Search username',usernamePlaceholder:'Enter a GitHub username',sort:'Sort by',sortForkDesc:'Fork date: newest first',sortForkAsc:'Fork date: oldest first',
     sortContribDesc:'Contributions: highest first',sortContribAsc:'Contributions: lowest first',sortReposDesc:'Public repositories: most first',sortReposAsc:'Public repositories: fewest first',
     sortStarsDesc:'Fork stars: most first',sortStarsAsc:'Fork stars: fewest first',sortAccountDesc:'Account date: newest first',sortAccountAsc:'Account date: oldest first',
-    accountCreated:'Account created',forkCreated:'Fork created',accountCreatedTime:'Account creation date',forkCreatedTime:'Fork creation date',from:'From',to:'To',clearFilters:'Clear filters',forkRepository:'Fork repository',owner:'Owner',
+    accountCreated:'Account created',forkCreated:'Fork created',accountCreatedTime:'Account creation date',forkCreatedTime:'Fork creation date',withinYear:'Within one year',from:'From',to:'To',clearFilters:'Clear filters',forkRepository:'Fork repository',owner:'Owner',
     basicInfo:'Profile',yearContributions:'GitHub-wide contributions (past year)',previous:'Previous',next:'Next',dataCaveat:'Counts use GitHub-visible data, including shared private contributions. Totals may differ from category sums, and data may change during collection.',
     footer:'OscarZhang-735',created:'Created {0}',pushed:'Pushed {0}',noCompanyLocation:'No company or location',accountCreated:'Account created {0}',repositoryStats:'Public repositories {0} (Non-fork: {1})',
     profileCollected:'Profile collected {0}',restricted:'Restricted contributions {0}',collected:'Collected {0}',contributionBreakdown:'Commits {0} · Pull requests {1} · Issues {2} · Reviews {3}',userType:'User',organizationType:'Organization',noResults:'No results',pageLabel:'{0} results · Page {1} of {2}',
@@ -358,12 +358,35 @@ $('prev').onclick = () => { page--; refreshResults().catch(e => error(e.message)
 $('next').onclick = () => { page++; refreshResults().catch(e => error(e.message)); };
 $('sort').onchange = () => { page = 1; refreshResults().catch(e => error(e.message)); };
 $('scale-scores').onchange = () => { if (lastResult) renderResults(lastResult); };
+function localDateValue(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+$('fork-within-year').onchange = () => {
+  if ($('fork-within-year').checked) {
+    const end = new Date();
+    const start = new Date(end);
+    start.setFullYear(start.getFullYear() - 1);
+    $('fork-created-from').value = localDateValue(start);
+    $('fork-created-to').value = localDateValue(end);
+  } else {
+    $('fork-created-from').value = '';
+    $('fork-created-to').value = '';
+  }
+  page = 1; refreshResults().catch(e => error(e.message));
+};
 for (const id of ['account-created-from','account-created-to','fork-created-from','fork-created-to']) {
-  $(id).onchange = () => { page = 1; refreshResults().catch(e => error(e.message)); };
+  $(id).onchange = () => {
+    if (id.startsWith('fork-created-')) $('fork-within-year').checked = false;
+    page = 1; refreshResults().catch(e => error(e.message));
+  };
 }
 $('clear-filters').onclick = () => {
   $('search').value = '';
   for (const id of ['account-created-from','account-created-to','fork-created-from','fork-created-to']) $(id).value = '';
+  $('fork-within-year').checked = false;
   page = 1; refreshResults().catch(e => error(e.message));
 };
 $('language').onchange = () => {
