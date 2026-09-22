@@ -9,7 +9,8 @@ class Settings(BaseSettings):
 
     github_token: SecretStr = SecretStr("")
     database_url: str = "sqlite:///./explorer.sqlite3"
-    max_forks: int = Field(1000, ge=1)
+    max_forks: int = Field(1000, ge=1, le=1000)
+    max_import_bytes: int = Field(10 * 1024 * 1024, ge=1024)
     max_queued_tasks: int = Field(5, ge=1)
     submissions_per_minute: int = Field(5, ge=1)
     github_request_interval: float = Field(1, ge=0)
@@ -28,4 +29,3 @@ class Settings(BaseSettings):
     @property
     def credential_id(self) -> str:
         return hashlib.sha256(self.github_token.get_secret_value().encode()).hexdigest()
-

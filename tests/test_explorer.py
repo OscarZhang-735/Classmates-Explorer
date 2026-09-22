@@ -1,4 +1,7 @@
 import asyncio
+import csv
+import io
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -38,6 +41,20 @@ def summary(i=0):
     return {"contributionCalendar": {"totalContributions": i}, "totalCommitContributions": i,
             "totalIssueContributions": 0, "totalPullRequestContributions": 0,
             "totalPullRequestReviewContributions": 0, "restrictedContributionsCount": 0}
+
+
+def stored_row(bio="A public profile"):
+    return {"id": "F-export", "name": "user/repo", "url": "https://github.com/user/repo",
+            "created_at": "2026-01-02T00:00:00Z", "pushed_at": None, "stars": 7,
+            "owner": {"id": "U-export", "login": "user", "type": "User",
+                      "url": "https://github.com/user", "avatar_url": "https://avatars.githubusercontent.com/u/1",
+                      "name": "User", "bio": bio, "company": None, "location": "Toronto",
+                      "website_url": "https://example.com", "collected_at": "2026-09-22T00:00:00Z"},
+            "collected_at": "2026-09-22T00:00:00Z",
+            "contribution": {"status": "completed", "from": "2025-09-22T00:00:00Z",
+                             "to": "2026-09-22T00:00:00Z", "collected_at": "2026-09-22T00:00:00Z",
+                             "total": 12, "commits": 8, "issues": 1, "pull_requests": 2,
+                             "reviews": 1, "restricted": 0}}
 
 
 def response(data, errors=None, cost=1, **headers):
@@ -310,6 +327,73 @@ def test_worker_end_to_end_cache_and_restart(tmp_path):
             if status["status"] == "completed": break
             time.sleep(.01)
         assert status["status"] == "completed" and len(fake.calls) == before
+
+
+def test_export_import_roundtrip_and_csv_safety(tmp_path):
+    config = settings(tmp_path, submissions_per_minute=20)
+    with TestClient(create_app(config, start_worker=False)) as client:
+        created = client.post("/api/tasks", json={"repository_url": "https://github.com/up/repo"}).json()
+        store = client.app.state.store
+        store.save_page(created["id"], [stored_row("=HYPERLINK(\"https://evil.test\")")], None, True, 1)
+        store.update(created["id"], status="completed", phase="done", completed_at=time.time(),
+                     canonical_url="https://github.com/up/repo")
+
+        exported = client.get(f"/api/tasks/{created['id']}/export?format=json")
+        assert exported.status_code == 200
+        assert exported.headers["content-disposition"].endswith('.json"')
+        snapshot = exported.json()
+        assert snapshot["format"] == "classmates-explorer-snapshot" and snapshot["version"] == 1
+        serialized = exported.text
+        assert "credential_id" not in serialized and "cursor" not in serialized and "test-secret" not in serialized
+
+        imported = client.post("/api/imports", content=exported.content,
+                               headers={"Content-Type": "application/json"})
+        assert imported.status_code == 201
+        task = imported.json()
+        assert task["id"] != created["id"] and task["status"] == "completed"
+        assert task["imported"] is True and task["retryable"] is False
+        items = client.get(f"/api/tasks/{task['id']}/results").json()["items"]
+        assert items == snapshot["results"]
+        assert client.post(f"/api/tasks/{task['id']}/retry").status_code == 409
+
+        exported_csv = client.get(f"/api/tasks/{created['id']}/export?format=csv")
+        assert exported_csv.status_code == 200 and exported_csv.content.startswith(b"\xef\xbb\xbf")
+        values = list(csv.DictReader(io.StringIO(exported_csv.content.decode("utf-8-sig"))))
+        assert values[0]["bio"].startswith("'=HYPERLINK")
+        assert values[0]["total"] == "12"
+
+
+def test_import_validation_is_atomic(tmp_path):
+    config = settings(tmp_path, submissions_per_minute=20)
+    with TestClient(create_app(config, start_worker=False)) as client:
+        task = client.post("/api/tasks", json={"repository_url": "https://github.com/up/repo"}).json()
+        store = client.app.state.store
+        store.save_page(task["id"], [stored_row()], None, True, 1)
+        store.update(task["id"], status="completed", completed_at=time.time())
+        snapshot = client.get(f"/api/tasks/{task['id']}/export").json()
+        before = len(store.tasks())
+
+        invalid = json.loads(json.dumps(snapshot))
+        invalid["version"] = 2
+        assert client.post("/api/imports", json=invalid).status_code == 422
+        invalid = json.loads(json.dumps(snapshot))
+        invalid["results"][0]["url"] = "https://evil.test/user/repo"
+        assert client.post("/api/imports", json=invalid).status_code == 422
+        invalid = json.loads(json.dumps(snapshot))
+        invalid["results"].append(invalid["results"][0])
+        assert client.post("/api/imports", json=invalid).status_code == 422
+        invalid = json.loads(json.dumps(snapshot))
+        invalid["results"][0]["owner"]["url"] = "https://name@github.com/user"
+        assert client.post("/api/imports", json=invalid).status_code == 422
+        assert len(store.tasks()) == before
+
+
+def test_import_size_limit(tmp_path):
+    config = settings(tmp_path, max_import_bytes=1024, submissions_per_minute=20)
+    with TestClient(create_app(config, start_worker=False)) as client:
+        response = client.post("/api/imports", content=b" " * 1025,
+                               headers={"Content-Type": "application/json"})
+        assert response.status_code == 413
 
 
 async def test_cancel_inflight_then_resume(tmp_path):

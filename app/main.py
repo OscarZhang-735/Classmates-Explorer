@@ -1,4 +1,7 @@
 import asyncio
+import csv
+import io
+import json
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -7,15 +10,16 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import GitHubClient
-from app.schemas import TaskInput
+from app.schemas import ImportSnapshot, TaskInput
 from app.services import Runner
+from pydantic import ValidationError
 
 ROOT = Path(__file__).parent
 
@@ -56,7 +60,9 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def home(request: Request):
         return templates.TemplateResponse(request=request, name="index.html", context={
-            "configured": bool(settings.github_token.get_secret_value()), "limit": settings.max_forks})
+            "configured": bool(settings.github_token.get_secret_value()), "limit": settings.max_forks,
+            "max_import_bytes": settings.max_import_bytes,
+            "max_import_mb": settings.max_import_bytes // 1024 // 1024})
 
     def get_task(task_id):
         task = app.state.store.get(task_id)
@@ -73,6 +79,28 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                              "owners_failed": sum(v == "failed" for v in owners.values())}
         value["omitted_forks"] = max(0, (task["total_direct_forks"] or 0) - task["limit"])
         return value
+
+    def export_snapshot(task, rows):
+        return {"format": "classmates-explorer-snapshot", "version": 1,
+                "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "task": {"source_task_id": task["id"], "repository_url": task["repository_url"],
+                         "canonical_url": task.get("canonical_url"), "source_status": task["status"],
+                         "from": task["from"], "to": task["to"],
+                         "total_direct_forks": task["total_direct_forks"],
+                         "truncated": task["truncated"], "limit": min(task["limit"], 1000),
+                         "forks_done": task["forks_done"]},
+                "results": sorted(rows, key=lambda row: (row["created_at"], row["id"]), reverse=True)}
+
+    def filename(task, suffix):
+        slug = "-".join(task["repository_url"].split("/")[-2:])
+        return f"{slug}-{task['date']}.{suffix}"
+
+    def csv_value(value):
+        if value is None:
+            return ""
+        value = str(value)
+        # Prevent spreadsheet software from interpreting imported profile text as a formula.
+        return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
 
     def admission(request):
         now = time.monotonic()
@@ -128,6 +156,63 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             rows.sort(key=lambda r: (r["created_at"], r["id"]), reverse=direction == "desc")
         return {"items": rows[(page - 1) * per_page:page * per_page], "total": len(rows),
                 "page": page, "per_page": per_page}
+
+    @app.get("/api/tasks/{task_id}/export")
+    async def export(task_id: str, format: Literal["json", "csv"] = "json"):
+        task = get_task(task_id)
+        rows = app.state.store.rows(task_id)
+        if format == "json":
+            # Validate and canonicalize our own output so a JSON export is guaranteed importable.
+            snapshot = ImportSnapshot.model_validate(export_snapshot(task, rows)).model_dump(mode="json", by_alias=True)
+            content = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+            return Response(content, media_type="application/json",
+                            headers={"Content-Disposition": f'attachment; filename="{filename(task, "json")}"'})
+        output = io.StringIO(newline="")
+        fields = ["fork_id", "fork_name", "fork_url", "fork_created_at", "fork_pushed_at", "stars",
+                  "owner_id", "owner_login", "owner_type", "owner_name", "owner_url", "avatar_url",
+                  "bio", "company", "location", "website_url", "owner_collected_at",
+                  "contribution_status", "contribution_from", "contribution_to", "contribution_collected_at",
+                  "total", "commits", "pull_requests", "issues", "reviews", "restricted", "error"]
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        for row in sorted(rows, key=lambda item: (item["created_at"], item["id"]), reverse=True):
+            owner, contribution = row["owner"], row["contribution"]
+            values = {"fork_id": row["id"], "fork_name": row["name"], "fork_url": row["url"],
+                      "fork_created_at": row["created_at"], "fork_pushed_at": row.get("pushed_at"),
+                      "stars": row["stars"], "owner_id": owner["id"], "owner_login": owner["login"],
+                      "owner_type": owner["type"], "owner_name": owner.get("name"), "owner_url": owner["url"],
+                      "avatar_url": owner.get("avatar_url"), "bio": owner.get("bio"),
+                      "company": owner.get("company"), "location": owner.get("location"),
+                      "website_url": owner.get("website_url"), "owner_collected_at": owner.get("collected_at"),
+                      "contribution_status": contribution["status"], "contribution_from": contribution.get("from"),
+                      "contribution_to": contribution.get("to"),
+                      "contribution_collected_at": contribution.get("collected_at"),
+                      "total": contribution.get("total"), "commits": contribution.get("commits"),
+                      "pull_requests": contribution.get("pull_requests"), "issues": contribution.get("issues"),
+                      "reviews": contribution.get("reviews"), "restricted": contribution.get("restricted"),
+                      "error": (contribution.get("error") or {}).get("message")}
+            writer.writerow({key: csv_value(value) for key, value in values.items()})
+        return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{filename(task, "csv")}"'})
+
+    @app.post("/api/imports", status_code=201)
+    async def import_snapshot(request: Request):
+        admission(request)
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > settings.max_import_bytes:
+                raise HTTPException(413, f"导入文件不能超过 {settings.max_import_bytes // 1024 // 1024} MB")
+            chunks.append(chunk)
+        if not size:
+            raise HTTPException(422, "导入文件为空")
+        try:
+            snapshot = ImportSnapshot.model_validate_json(b"".join(chunks))
+        except ValidationError:
+            raise HTTPException(422, "不是有效的 Classmates Explorer v1 JSON 快照") from None
+        data = snapshot.model_dump(mode="json", by_alias=True)
+        task = app.state.store.import_snapshot(data)
+        return public_task(task)
 
     @app.post("/api/tasks/{task_id}/cancel")
     async def cancel(task_id: str):

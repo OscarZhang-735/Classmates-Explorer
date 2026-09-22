@@ -88,6 +88,38 @@ class Store:
             session.commit()
         return self.serialize(task)
 
+    def import_snapshot(self, snapshot: dict) -> dict:
+        now = time.time()
+        task_data = snapshot["task"]
+        rows = snapshot["results"]
+        complete_rows = all(row["contribution"]["status"] in ("completed", "not_applicable") for row in rows)
+        complete = task_data["source_status"] == "completed" and task_data["forks_done"] and complete_rows
+        status = "completed" if complete else "partial"
+        task_id = uuid.uuid4().hex
+        payload = {"phase": "imported", "from": task_data["from"], "to": task_data["to"],
+                   "date": task_data["to"][:10], "limit": task_data["limit"], "cursor": None,
+                   "forks_done": task_data["forks_done"],
+                   "total_direct_forks": task_data["total_direct_forks"],
+                   "truncated": task_data["truncated"], "error": None, "retryable": False,
+                   "resume_at": None, "requests": 0, "points": 0, "rate_limit_streak": 0,
+                   "completed_at": now, "canonical_url": task_data.get("canonical_url"),
+                   "imported": True, "imported_at": now, "exported_at": snapshot["exported_at"],
+                   "source_task_id": task_data["source_task_id"],
+                   "source_status": task_data["source_status"]}
+        if not complete:
+            payload["error"] = {"code": "imported_partial", "message": "这是未完整完成的导入快照"}
+        task = Task(id=task_id, repository_url=task_data["repository_url"],
+                    credential_id=f"import:{task_id}", status=status,
+                    created_at=now, updated_at=now, payload=payload)
+        # One transaction ensures malformed/conflicting data never creates a partial import.
+        with self.session() as session:
+            session.add(task)
+            for row in rows:
+                session.add(Fork(task_id=task_id, repository_id=row["id"],
+                                 owner_id=row["owner"]["id"], payload=row))
+            session.commit()
+        return self.serialize(task)
+
     def update(self, task_id: str, **values) -> dict:
         with self.session() as session:
             task = session.get(Task, task_id)

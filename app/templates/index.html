@@ -16,9 +16,14 @@
     <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required autocomplete="off">
     <button id="submit" type="submit">探索 Fork →</button></div>
     <small>最多展示最新 {{ limit }} 个一级 Fork · 不包含二级 Fork</small></form>
+  <div class="snapshot-actions"><button id="import" type="button" class="secondary">导入 JSON 快照</button>
+    <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="{{ max_import_bytes }}" hidden>
+    <span class="muted">导入文件仅在本机处理，最多 {{ max_import_mb }} MB / 1,000 条</span></div>
   <p id="error" role="alert" hidden></p>
   <section id="task-panel" hidden aria-live="polite">
     <div class="task-heading"><h2 id="task-title">准备查询</h2><div>
+      <button id="export-json" type="button" class="secondary">导出 JSON</button>
+      <button id="export-csv" type="button" class="secondary">导出 CSV</button>
       <button id="retry" class="secondary" hidden>重试未完成部分</button>
       <button id="cancel" class="secondary">取消任务</button></div></div>
     <p id="progress"></p><p id="interval" class="muted"></p><p id="task-notice" class="notice" hidden></p>

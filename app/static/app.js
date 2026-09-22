@@ -71,6 +71,7 @@ async function poll() {
     if (task.truncated) notices.push(`已按上限截断，仅展示最新 ${task.limit} 个一级 Fork，约 ${task.omitted_forks} 个未纳入。`);
     if (task.error) notices.push(task.error.message);
     if (task.resume_at) notices.push(`预计恢复：${date(task.resume_at * 1000)}`);
+    if (task.imported) notices.push(`这是本地导入快照，原任务状态：${labels[task.source_status] || task.source_status}。`);
     if (task.status === 'cancelled') notices.push('已保留结果，可继续未完成部分。');
     $('task-notice').textContent = notices.join(' '); $('task-notice').hidden = !notices.length;
     $('cancel').hidden = terminal.has(task.status);
@@ -93,6 +94,28 @@ $('query-form').addEventListener('submit', async (event) => {
     localStorage.setItem('explorer-task', taskId); await poll();
   } catch (e) { error(e.message); } finally { $('submit').disabled = false; }
 });
+$('import').onclick = () => $('import-file').click();
+$('import-file').onchange = async () => {
+  const file = $('import-file').files[0];
+  if (!file) return;
+  error(''); $('import').disabled = true;
+  try {
+    const maxBytes = Number($('import-file').dataset.maxBytes);
+    if (file.size > maxBytes) throw new Error(`导入文件不能超过 ${Math.floor(maxBytes / 1024 / 1024)} MB`);
+    const task = await api('/api/imports', {method:'POST', body:await file.text()});
+    taskId = task.id; generation++; page = 1;
+    localStorage.setItem('explorer-task', taskId); await poll();
+  } catch (e) { error(e.message); }
+  finally { $('import').disabled = false; $('import-file').value = ''; }
+};
+function download(format) {
+  if (!taskId) return;
+  const anchor = document.createElement('a');
+  anchor.href = `/api/tasks/${encodeURIComponent(taskId)}/export?format=${format}`;
+  anchor.download = ''; document.body.append(anchor); anchor.click(); anchor.remove();
+}
+$('export-json').onclick = () => download('json');
+$('export-csv').onclick = () => download('csv');
 for (const action of ['cancel','retry']) $(action).onclick = async () => {
   $(action).disabled = true;
   try { await api(`/api/tasks/${taskId}/${action}`, {method:'POST'}); error(''); await poll(); }
