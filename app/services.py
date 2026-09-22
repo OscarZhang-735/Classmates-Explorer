@@ -141,7 +141,7 @@ class Runner:
                 pass
 
     def owner(self, raw: dict, credential: str):
-        key = f"owner:{credential}:{raw['id']}"
+        key = f"owner:v2:{credential}:{raw['id']}"
         cached = self.store.cache_get(key)
         if cached:
             # Keep stable ID caching without retaining a stale renamed login/URL.
@@ -150,6 +150,8 @@ class Runner:
                  "url": raw["url"], "avatar_url": raw.get("avatarUrl"), "name": raw.get("name"),
                  "bio": raw.get("bio") or raw.get("description"), "company": raw.get("company"),
                  "location": raw.get("location"), "website_url": raw.get("websiteUrl"),
+                 "account_created_at": raw.get("createdAt"),
+                 "public_repositories": (raw.get("repositories") or {}).get("totalCount"),
                  "collected_at": collected_at()}
         self.store.cache_put(key, value, self.settings.owner_cache_seconds)
         return value

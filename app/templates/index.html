@@ -22,14 +22,22 @@
   <p id="error" role="alert" hidden></p>
   <section id="task-panel" hidden aria-live="polite">
     <div class="task-heading"><h2 id="task-title">准备查询</h2><div>
-      <button id="export-json" type="button" class="secondary">导出 JSON</button>
-      <button id="export-csv" type="button" class="secondary">导出 CSV</button>
+      <button id="export-json" type="button" class="secondary" disabled title="查询完成后可导出">导出 JSON</button>
+      <button id="export-csv" type="button" class="secondary" disabled title="查询完成后可导出">导出 CSV</button>
       <button id="retry" class="secondary" hidden>重试未完成部分</button>
       <button id="cancel" class="secondary">取消任务</button></div></div>
     <p id="progress"></p><p id="interval" class="muted"></p><p id="task-notice" class="notice" hidden></p>
     <div class="filters"><label>搜索用户名 <input id="search" type="search" placeholder="输入 GitHub 用户名"></label>
-      <label>排序 <select id="sort"><option value="created">Fork 创建时间 ↓</option>
-      <option value="contributions">贡献总数 ↓</option></select></label></div>
+      <label>排序 <select id="sort">
+        <option value="created:desc">Fork 时间：新 → 旧</option><option value="created:asc">Fork 时间：旧 → 新</option>
+        <option value="contributions:desc">贡献总数：高 → 低</option><option value="contributions:asc">贡献总数：低 → 高</option>
+        <option value="repositories:desc">公开仓库数：高 → 低</option><option value="repositories:asc">公开仓库数：低 → 高</option>
+        <option value="stars:desc">Star 数：高 → 低</option><option value="stars:asc">Star 数：低 → 高</option>
+        <option value="account_created:desc">账号创建：新 → 旧</option><option value="account_created:asc">账号创建：旧 → 新</option>
+      </select></label>
+      <div class="date-filter"><span>账号创建</span><label>从 <input id="account-created-from" type="date"></label><label>至 <input id="account-created-to" type="date"></label></div>
+      <div class="date-filter"><span>Fork 创建</span><label>从 <input id="fork-created-from" type="date"></label><label>至 <input id="fork-created-to" type="date"></label></div>
+      <button id="clear-filters" type="button" class="secondary">清除筛选</button></div>
     <div class="table-wrap"><table><thead><tr><th>Fork 仓库</th><th>所有者</th><th>基本信息</th><th>近一年全站贡献</th></tr></thead>
       <tbody id="results"></tbody></table></div>
     <div class="pagination"><span id="page-label"></span><div><button id="prev" class="secondary">上一页</button>

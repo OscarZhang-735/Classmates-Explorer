@@ -79,6 +79,7 @@ class Store:
                     status="queued", created_at=now.timestamp(), updated_at=now.timestamp(),
                     payload={"phase": "repository", "from": iso(end - timedelta(days=365)),
                              "to": iso(end), "date": end.date().isoformat(), "limit": limit,
+                             "data_version": 2,
                              "cursor": None, "forks_done": False, "total_direct_forks": None,
                              "truncated": False, "error": None, "retryable": True,
                              "resume_at": None, "requests": 0, "points": 0,
@@ -98,6 +99,7 @@ class Store:
         task_id = uuid.uuid4().hex
         payload = {"phase": "imported", "from": task_data["from"], "to": task_data["to"],
                    "date": task_data["to"][:10], "limit": task_data["limit"], "cursor": None,
+                   "data_version": task_data.get("data_version", 1),
                    "forks_done": task_data["forks_done"],
                    "total_direct_forks": task_data["total_direct_forks"],
                    "truncated": task_data["truncated"], "error": None, "retryable": False,

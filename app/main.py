@@ -5,7 +5,7 @@ import json
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                          "from": task["from"], "to": task["to"],
                          "total_direct_forks": task["total_direct_forks"],
                          "truncated": task["truncated"], "limit": min(task["limit"], 1000),
-                         "forks_done": task["forks_done"]},
+                         "forks_done": task["forks_done"], "data_version": task.get("data_version", 1)},
                 "results": sorted(rows, key=lambda row: (row["created_at"], row["id"]), reverse=True)}
 
     def filename(task, suffix):
@@ -123,7 +123,8 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             today = datetime.now(timezone.utc).date().isoformat()
             for task in reversed(app.state.store.tasks()):
                 if (task["repository_url"] == body.repository_url and task["date"] == today
-                        and task["credential_id"] == settings.credential_id and task["limit"] == settings.max_forks):
+                        and task["credential_id"] == settings.credential_id and task["limit"] == settings.max_forks
+                        and task.get("data_version") == 2):
                     cached = (task["status"] == "completed" and
                               time.time() - (task["completed_at"] or 0) < settings.result_cache_seconds)
                     if task["status"] in ACTIVE or cached:
@@ -142,24 +143,56 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     @app.get("/api/tasks/{task_id}/results")
     async def results(task_id: str, page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=100),
                       search: str = Query("", max_length=100),
-                      sort: Literal["created", "contributions"] = "created",
-                      direction: Literal["asc", "desc"] = "desc"):
+                      sort: Literal["created", "contributions", "repositories", "stars", "account_created"] = "created",
+                      direction: Literal["asc", "desc"] = "desc",
+                      account_created_from: date | None = None, account_created_to: date | None = None,
+                      fork_created_from: date | None = None, fork_created_to: date | None = None):
         get_task(task_id)
+        if account_created_from and account_created_to and account_created_from > account_created_to:
+            raise HTTPException(422, "账号创建时间的起始日期不能晚于结束日期")
+        if fork_created_from and fork_created_to and fork_created_from > fork_created_to:
+            raise HTTPException(422, "Fork 创建时间的起始日期不能晚于结束日期")
         rows = app.state.store.rows(task_id)
         rows = [r for r in rows if search.casefold() in r["owner"]["login"].casefold()]
-        if sort == "contributions":
-            known = [r for r in rows if r["contribution"].get("total") is not None]
-            unknown = [r for r in rows if r["contribution"].get("total") is None]
-            known.sort(key=lambda r: (r["contribution"]["total"], r["id"]), reverse=direction == "desc")
-            rows = known + sorted(unknown, key=lambda r: r["id"])
-        else:
-            rows.sort(key=lambda r: (r["created_at"], r["id"]), reverse=direction == "desc")
+
+        def parsed_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+            except (TypeError, ValueError):
+                return None
+
+        def in_range(value, start, end):
+            candidate = parsed_date(value)
+            return candidate is not None and (start is None or candidate >= start) and (end is None or candidate <= end)
+
+        if account_created_from or account_created_to:
+            rows = [r for r in rows if in_range(r["owner"].get("account_created_at"),
+                                                 account_created_from, account_created_to)]
+        if fork_created_from or fork_created_to:
+            rows = [r for r in rows if in_range(r.get("created_at"), fork_created_from, fork_created_to)]
+
+        getters = {
+            "created": lambda r: r.get("created_at"),
+            "contributions": lambda r: r["contribution"].get("total"),
+            "repositories": lambda r: r["owner"].get("public_repositories"),
+            "stars": lambda r: r.get("stars"),
+            "account_created": lambda r: r["owner"].get("account_created_at"),
+        }
+        getter = getters[sort]
+        known = [row for row in rows if getter(row) is not None]
+        unknown = [row for row in rows if getter(row) is None]
+        known.sort(key=lambda row: (getter(row), row["id"]), reverse=direction == "desc")
+        rows = known + sorted(unknown, key=lambda row: row["id"])
         return {"items": rows[(page - 1) * per_page:page * per_page], "total": len(rows),
                 "page": page, "per_page": per_page}
 
     @app.get("/api/tasks/{task_id}/export")
     async def export(task_id: str, format: Literal["json", "csv"] = "json"):
         task = get_task(task_id)
+        if task["status"] != "completed":
+            raise HTTPException(409, "仅查询完成的任务可以导出")
         rows = app.state.store.rows(task_id)
         if format == "json":
             # Validate and canonicalize our own output so a JSON export is guaranteed importable.
@@ -170,7 +203,8 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         output = io.StringIO(newline="")
         fields = ["fork_id", "fork_name", "fork_url", "fork_created_at", "fork_pushed_at", "stars",
                   "owner_id", "owner_login", "owner_type", "owner_name", "owner_url", "avatar_url",
-                  "bio", "company", "location", "website_url", "owner_collected_at",
+                  "bio", "company", "location", "website_url", "account_created_at",
+                  "public_repositories", "owner_collected_at",
                   "contribution_status", "contribution_from", "contribution_to", "contribution_collected_at",
                   "total", "commits", "pull_requests", "issues", "reviews", "restricted", "error"]
         writer = csv.DictWriter(output, fieldnames=fields)
@@ -183,7 +217,10 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                       "owner_type": owner["type"], "owner_name": owner.get("name"), "owner_url": owner["url"],
                       "avatar_url": owner.get("avatar_url"), "bio": owner.get("bio"),
                       "company": owner.get("company"), "location": owner.get("location"),
-                      "website_url": owner.get("website_url"), "owner_collected_at": owner.get("collected_at"),
+                      "website_url": owner.get("website_url"),
+                      "account_created_at": owner.get("account_created_at"),
+                      "public_repositories": owner.get("public_repositories"),
+                      "owner_collected_at": owner.get("collected_at"),
                       "contribution_status": contribution["status"], "contribution_from": contribution.get("from"),
                       "contribution_to": contribution.get("to"),
                       "contribution_collected_at": contribution.get("collected_at"),

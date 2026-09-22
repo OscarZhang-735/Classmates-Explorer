@@ -44,6 +44,8 @@ class ImportOwner(BaseModel):
     company: str | None = Field(None, max_length=300)
     location: str | None = Field(None, max_length=300)
     website_url: str | None = Field(None, max_length=500)
+    account_created_at: datetime | None = None
+    public_repositories: int | None = Field(None, ge=0)
     collected_at: datetime | None = None
 
     @field_validator("url")
@@ -135,6 +137,7 @@ class ImportTask(BaseModel):
     truncated: bool
     limit: int = Field(ge=1, le=1000)
     forks_done: bool
+    data_version: int = Field(1, ge=1, le=2)
 
     @field_validator("repository_url")
     @classmethod

@@ -28,7 +28,8 @@ def owner(owner_id="U1", kind="User"):
     return {"id": owner_id, "__typename": kind, "login": owner_id.lower(),
             "url": f"https://github.com/{owner_id}", "avatarUrl": None,
             "name": None, "bio": "<script>alert(1)</script>", "company": None,
-            "location": None, "websiteUrl": "javascript:alert(1)"}
+            "location": None, "websiteUrl": "javascript:alert(1)",
+            "createdAt": "2020-01-01T00:00:00Z", "repositories": {"totalCount": 3}}
 
 
 def fork(i=1, who=None, parent="ROOT"):
@@ -49,7 +50,8 @@ def stored_row(bio="A public profile"):
             "owner": {"id": "U-export", "login": "user", "type": "User",
                       "url": "https://github.com/user", "avatar_url": "https://avatars.githubusercontent.com/u/1",
                       "name": "User", "bio": bio, "company": None, "location": "Toronto",
-                      "website_url": "https://example.com", "collected_at": "2026-09-22T00:00:00Z"},
+                      "website_url": "https://example.com", "account_created_at": "2020-03-04T00:00:00Z",
+                      "public_repositories": 9, "collected_at": "2026-09-22T00:00:00Z"},
             "collected_at": "2026-09-22T00:00:00Z",
             "contribution": {"status": "completed", "from": "2025-09-22T00:00:00Z",
                              "to": "2026-09-22T00:00:00Z", "collected_at": "2026-09-22T00:00:00Z",
@@ -293,6 +295,53 @@ def test_api_dedup_limits_pagination_and_cancel(tmp_path):
         assert client.post(url + "/cancel", headers={"Origin": "https://evil.test"}).status_code == 403
 
 
+def test_result_sorting_and_date_filters(tmp_path):
+    config = settings(tmp_path, submissions_per_minute=20)
+    with TestClient(create_app(config, start_worker=False)) as client:
+        task = client.post("/api/tasks", json={"repository_url": "https://github.com/up/repo"}).json()
+        base = stored_row()
+        rows = []
+        values = [
+            ("F1", "2021-01-10T00:00:00Z", 9, 20, 2, "2018-05-01T00:00:00Z"),
+            ("F2", "2022-06-15T00:00:00Z", 1, 5, 10, "2020-07-03T00:00:00Z"),
+            ("F3", "2020-03-20T00:00:00Z", 5, None, None, None),
+        ]
+        for fork_id, created, stars, contributions, repositories, account_created in values:
+            row = json.loads(json.dumps(base))
+            row.update(id=fork_id, created_at=created, stars=stars)
+            row["owner"].update(id=f"U-{fork_id}", login=f"user-{fork_id}",
+                                public_repositories=repositories, account_created_at=account_created)
+            row["contribution"]["total"] = contributions
+            if contributions is None:
+                row["contribution"] = {"status": "failed"}
+            rows.append(row)
+        client.app.state.store.save_page(task["id"], rows, None, True, 3)
+        url = f"/api/tasks/{task['id']}/results"
+
+        expected = {
+            ("created", "asc"): ["F3", "F1", "F2"], ("created", "desc"): ["F2", "F1", "F3"],
+            ("contributions", "asc"): ["F2", "F1", "F3"], ("contributions", "desc"): ["F1", "F2", "F3"],
+            ("repositories", "asc"): ["F1", "F2", "F3"], ("repositories", "desc"): ["F2", "F1", "F3"],
+            ("stars", "asc"): ["F2", "F3", "F1"], ("stars", "desc"): ["F1", "F3", "F2"],
+            ("account_created", "asc"): ["F1", "F2", "F3"],
+            ("account_created", "desc"): ["F2", "F1", "F3"],
+        }
+        for (sort, direction), ids in expected.items():
+            items = client.get(url, params={"sort": sort, "direction": direction}).json()["items"]
+            assert [row["id"] for row in items] == ids
+
+        result = client.get(url, params={"account_created_from": "2019-01-01",
+                                         "account_created_to": "2020-12-31"}).json()
+        assert [row["id"] for row in result["items"]] == ["F2"]
+        result = client.get(url, params={"fork_created_from": "2021-01-10",
+                                         "fork_created_to": "2021-01-10"}).json()
+        assert [row["id"] for row in result["items"]] == ["F1"]
+        assert client.get(url, params={"account_created_from": "2022-01-01",
+                                       "account_created_to": "2021-01-01"}).status_code == 422
+        assert client.get(url, params={"fork_created_from": "2022-01-01",
+                                       "fork_created_to": "2021-01-01"}).status_code == 422
+
+
 def test_submission_throttle_and_missing_token(tmp_path):
     config = settings(tmp_path, submissions_per_minute=1)
     with TestClient(create_app(config, start_worker=False)) as client:
@@ -333,6 +382,7 @@ def test_export_import_roundtrip_and_csv_safety(tmp_path):
     config = settings(tmp_path, submissions_per_minute=20)
     with TestClient(create_app(config, start_worker=False)) as client:
         created = client.post("/api/tasks", json={"repository_url": "https://github.com/up/repo"}).json()
+        assert client.get(f"/api/tasks/{created['id']}/export").status_code == 409
         store = client.app.state.store
         store.save_page(created["id"], [stored_row("=HYPERLINK(\"https://evil.test\")")], None, True, 1)
         store.update(created["id"], status="completed", phase="done", completed_at=time.time(),
@@ -361,6 +411,8 @@ def test_export_import_roundtrip_and_csv_safety(tmp_path):
         values = list(csv.DictReader(io.StringIO(exported_csv.content.decode("utf-8-sig"))))
         assert values[0]["bio"].startswith("'=HYPERLINK")
         assert values[0]["total"] == "12"
+        assert values[0]["account_created_at"] == "2020-03-04T00:00:00Z"
+        assert values[0]["public_repositories"] == "9"
 
 
 def test_import_validation_is_atomic(tmp_path):

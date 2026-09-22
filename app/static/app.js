@@ -37,6 +37,7 @@ function row(item) {
   const info = document.createElement('td');
   info.append(text('p', item.owner.bio), text('small', [item.owner.company, item.owner.location].filter(Boolean).join(' · ') || '未填写公司或地区'));
   if (item.owner.website_url) info.append(link(item.owner.website_url, item.owner.website_url));
+  info.append(text('small', `账号创建 ${date(item.owner.account_created_at)} · 公开仓库 ${item.owner.public_repositories ?? '—'}`));
   info.append(text('small', `资料采集 ${date(item.owner.collected_at)}`));
   const contribution = document.createElement('td'), c = item.contribution;
   if (c.status === 'completed') {
@@ -49,7 +50,15 @@ function row(item) {
 async function refreshResults(id = taskId, version = generation) {
   if (!id) return;
   const request = ++resultRequest;
-  const params = new URLSearchParams({page, per_page:50, search:$('search').value, sort:$('sort').value});
+  const [sort, direction] = $('sort').value.split(':');
+  const params = new URLSearchParams({page, per_page:50, search:$('search').value, sort, direction});
+  const filters = {
+    account_created_from: $('account-created-from').value,
+    account_created_to: $('account-created-to').value,
+    fork_created_from: $('fork-created-from').value,
+    fork_created_to: $('fork-created-to').value,
+  };
+  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
   const result = await api(`/api/tasks/${id}/results?${params}`);
   if (id !== taskId || version !== generation || request !== resultRequest) return;
   $('results').replaceChildren(...result.items.map(row));
@@ -76,6 +85,10 @@ async function poll() {
     $('task-notice').textContent = notices.join(' '); $('task-notice').hidden = !notices.length;
     $('cancel').hidden = terminal.has(task.status);
     $('retry').hidden = !(['partial','failed','cancelled'].includes(task.status) && task.retryable);
+    for (const format of ['json','csv']) {
+      const button = $(`export-${format}`), enabled = task.status === 'completed';
+      button.disabled = !enabled; button.title = enabled ? '' : '查询完成后可导出';
+    }
     await refreshResults(id, version);
     if (!terminal.has(task.status) && version === generation && request === pollRequest) timer = setTimeout(poll, 2000);
   } catch (e) {
@@ -124,6 +137,14 @@ for (const action of ['cancel','retry']) $(action).onclick = async () => {
 $('prev').onclick = () => { page--; refreshResults().catch(e => error(e.message)); };
 $('next').onclick = () => { page++; refreshResults().catch(e => error(e.message)); };
 $('sort').onchange = () => { page = 1; refreshResults().catch(e => error(e.message)); };
+for (const id of ['account-created-from','account-created-to','fork-created-from','fork-created-to']) {
+  $(id).onchange = () => { page = 1; refreshResults().catch(e => error(e.message)); };
+}
+$('clear-filters').onclick = () => {
+  $('search').value = '';
+  for (const id of ['account-created-from','account-created-to','fork-created-from','fork-created-to']) $(id).value = '';
+  page = 1; refreshResults().catch(e => error(e.message));
+};
 let searchTimer;
 $('search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => {page=1;refreshResults().catch(e=>error(e.message));},250); };
 const saved = localStorage.getItem('explorer-task');
