@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 import csv
 import io
 import json
@@ -10,16 +11,16 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import GitHubClient
-from app.schemas import ImportSnapshot, TaskInput
+from app.schemas import ImportSnapshot, TaskInput, TokenInput
 from app.services import Runner
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 ROOT = Path(__file__).parent
 
@@ -63,6 +64,42 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             "configured": bool(settings.github_token.get_secret_value()), "limit": settings.max_forks,
             "max_import_bytes": settings.max_import_bytes,
             "max_import_mb": settings.max_import_bytes // 1024 // 1024})
+
+    @app.get("/api/config/github", include_in_schema=False)
+    async def github_config_status():
+        return {"configured": bool(settings.github_token.get_secret_value())}
+
+    @app.post("/api/config/github", include_in_schema=False)
+    async def configure_github(body: TokenInput):
+        if app.state.store.tasks(ACTIVE):
+            raise HTTPException(409, "任务运行期间不能更换 GitHub Token")
+        token = body.token.get_secret_value()
+        env_path = Path(".env")
+        lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+        replacement = f"GITHUB_TOKEN={token}"
+        updated, found = [], False
+        for line in lines:
+            if line.lstrip().startswith("GITHUB_TOKEN="):
+                if not found:
+                    updated.append(replacement)
+                    found = True
+            else:
+                updated.append(line)
+        if not found:
+            updated.append(replacement)
+        temporary = env_path.with_suffix(".env.tmp")
+        temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+        temporary.replace(env_path)
+        settings.github_token = SecretStr(token)
+        app.state.runner.github.update_token(token)
+        return {"configured": True}
+
+    @app.post("/api/config/github/reveal", include_in_schema=False)
+    async def reveal_github_token():
+        token = settings.github_token.get_secret_value()
+        if not token:
+            raise HTTPException(404, "尚未配置 GitHub Token")
+        return JSONResponse({"token": token}, headers={"Cache-Control": "no-store"})
 
     def get_task(task_id):
         task = app.state.store.get(task_id)
@@ -145,12 +182,30 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                       search: str = Query("", max_length=100),
                       sort: Literal["created", "contributions", "repositories", "stars", "account_created"] = "created",
                       direction: Literal["asc", "desc"] = "desc",
-                      account_created_from: date | None = None, account_created_to: date | None = None,
-                      fork_created_from: date | None = None, fork_created_to: date | None = None):
+                      account_created_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$"),
+                      account_created_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$"),
+                      fork_created_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$"),
+                      fork_created_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$")):
         get_task(task_id)
-        if account_created_from and account_created_to and account_created_from > account_created_to:
+
+        def filter_bound(value, upper=False):
+            if value is None:
+                return None
+            try:
+                if len(value) == 7:
+                    year, month = map(int, value.split("-"))
+                    return date(year, month, calendar.monthrange(year, month)[1] if upper else 1)
+                return date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(422, "日期筛选必须为有效的 YYYY-MM 或 YYYY-MM-DD") from None
+
+        account_from = filter_bound(account_created_from)
+        account_to = filter_bound(account_created_to, upper=True)
+        fork_from = filter_bound(fork_created_from)
+        fork_to = filter_bound(fork_created_to, upper=True)
+        if account_from and account_to and account_from > account_to:
             raise HTTPException(422, "账号创建时间的起始日期不能晚于结束日期")
-        if fork_created_from and fork_created_to and fork_created_from > fork_created_to:
+        if fork_from and fork_to and fork_from > fork_to:
             raise HTTPException(422, "Fork 创建时间的起始日期不能晚于结束日期")
         rows = app.state.store.rows(task_id)
         rows = [r for r in rows if search.casefold() in r["owner"]["login"].casefold()]
@@ -167,11 +222,11 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             candidate = parsed_date(value)
             return candidate is not None and (start is None or candidate >= start) and (end is None or candidate <= end)
 
-        if account_created_from or account_created_to:
+        if account_from or account_to:
             rows = [r for r in rows if in_range(r["owner"].get("account_created_at"),
-                                                 account_created_from, account_created_to)]
-        if fork_created_from or fork_created_to:
-            rows = [r for r in rows if in_range(r.get("created_at"), fork_created_from, fork_created_to)]
+                                                 account_from, account_to)]
+        if fork_from or fork_to:
+            rows = [r for r in rows if in_range(r.get("created_at"), fork_from, fork_to)]
 
         getters = {
             "created": lambda r: r.get("created_at"),

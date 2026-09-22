@@ -1,50 +1,57 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Classmates Explorer · Fork 探索</title>
+  <title>Classmates Explorer · Explore Forks</title>
+  <script>document.documentElement.dataset.theme = localStorage.getItem('explorer-theme') === 'light' ? 'light' : 'dark';</script>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
 <main>
-  <header><span class="eyebrow">GITHUB / COMMUNITY EXPLORER</span><a href="/docs">API 文档 ↗</a></header>
+  <header><a class="header-brand" href="https://github.com/OscarZhang-735/Classmates-Explorer" target="_blank" rel="noopener noreferrer" aria-label="Classmates Explorer GitHub repository" title="Classmates Explorer GitHub repository"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.1c-3.1.68-3.76-1.32-3.76-1.32-.5-1.3-1.23-1.65-1.23-1.65-1.01-.7.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15.99 1.7 2.6 1.2 3.23.92.1-.72.39-1.2.7-1.48-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.95 0 0 .94-.3 3.05 1.15a10.6 10.6 0 0 1 5.55 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.53.23 2.67.11 2.95.72.78 1.15 1.78 1.15 3 0 4.3-2.61 5.24-5.1 5.51.4.34.75 1 .75 2.02V22c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><span class="visually-hidden">GitHub</span></a><div class="header-actions"><button id="theme-toggle" type="button" class="secondary" aria-pressed="true">☀ Light mode</button><label for="language" data-i18n="language">Language</label><select id="language" aria-label="Language"><option value="zh-CN">中文</option><option value="en" selected>English</option></select><a href="/docs" data-i18n="apiDocs">API docs ↗</a></div></header>
   <section class="intro"><h1>Classmates Explorer</h1>
-    <p>查看公开项目的一级 Fork、所有者资料与近一年的 GitHub 全站贡献。</p></section>
-  {% if not configured %}<p class="notice">尚未配置 GitHub Token。请在服务端 .env 中设置 GITHUB_TOKEN 后重启。</p>{% endif %}
-  <form id="query-form"><label for="repo-url">公开仓库 URL</label><div class="input-row">
+    <p data-i18n="intro">Explore public-repo forks, owner profiles, and contributions from the past year.</p></section>
+  <form id="query-form"><label for="repo-url" data-i18n="repositoryUrl">公开仓库 URL</label><div class="input-row">
     <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required autocomplete="off">
-    <button id="submit" type="submit">探索 Fork →</button></div>
-    <small>最多展示最新 {{ limit }} 个一级 Fork · 不包含二级 Fork</small></form>
-  <div class="snapshot-actions"><button id="import" type="button" class="secondary">导入 JSON 快照</button>
-    <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="{{ max_import_bytes }}" hidden>
-    <span class="muted">导入文件仅在本机处理，最多 {{ max_import_mb }} MB / 1,000 条</span></div>
+    <button id="submit" type="submit" data-i18n="explore">探索 Fork →</button></div>
+    <small id="limit-note" data-limit="{{ limit }}"></small>
+    <details id="token-config" class="token-config"><summary><span data-i18n="tokenConfig">GitHub API settings</span><span id="token-status" class="status-badge" data-configured="{{ 'true' if configured else 'false' }}"></span></summary>
+      <div class="token-fields input-row"><input id="github-token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Paste a GitHub token" autocomplete="new-password">
+      <button id="reveal-token" type="button" class="secondary" data-i18n="showToken">Show token</button>
+      <button id="save-token" type="button" class="secondary" data-i18n="saveToken">Save token</button></div>
+    </details></form>
+  <div class="data-actions"><button id="export-json" type="button" class="secondary" disabled data-i18n="exportJson">Export JSON</button>
+    <button id="export-csv" type="button" class="secondary" disabled data-i18n="exportCsv">Export CSV</button>
+    <button id="import" type="button" class="secondary" data-i18n="importJson">Import JSON snapshot</button>
+    <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="{{ max_import_bytes }}" hidden></div>
   <p id="error" role="alert" hidden></p>
   <section id="task-panel" hidden aria-live="polite">
-    <div class="task-heading"><h2 id="task-title">准备查询</h2><div>
-      <button id="export-json" type="button" class="secondary" disabled title="查询完成后可导出">导出 JSON</button>
-      <button id="export-csv" type="button" class="secondary" disabled title="查询完成后可导出">导出 CSV</button>
-      <button id="retry" class="secondary" hidden>重试未完成部分</button>
-      <button id="cancel" class="secondary">取消任务</button></div></div>
+    <div class="task-heading"><h2 id="task-title" data-i18n="preparing">准备查询</h2><div>
+      <button id="retry" class="secondary" hidden data-i18n="retry">重试未完成部分</button>
+      <button id="cancel" class="secondary" data-i18n="cancel">取消任务</button></div></div>
     <p id="progress"></p><p id="interval" class="muted"></p><p id="task-notice" class="notice" hidden></p>
-    <div class="filters"><label>搜索用户名 <input id="search" type="search" placeholder="输入 GitHub 用户名"></label>
-      <label>排序 <select id="sort">
-        <option value="created:desc">Fork 时间：新 → 旧</option><option value="created:asc">Fork 时间：旧 → 新</option>
-        <option value="contributions:desc">贡献总数：高 → 低</option><option value="contributions:asc">贡献总数：低 → 高</option>
-        <option value="repositories:desc">公开仓库数：高 → 低</option><option value="repositories:asc">公开仓库数：低 → 高</option>
-        <option value="stars:desc">Star 数：高 → 低</option><option value="stars:asc">Star 数：低 → 高</option>
-        <option value="account_created:desc">账号创建：新 → 旧</option><option value="account_created:asc">账号创建：旧 → 新</option>
-      </select></label>
-      <div class="date-filter"><span>账号创建</span><label>从 <input id="account-created-from" type="date"></label><label>至 <input id="account-created-to" type="date"></label></div>
-      <div class="date-filter"><span>Fork 创建</span><label>从 <input id="fork-created-from" type="date"></label><label>至 <input id="fork-created-to" type="date"></label></div>
-      <button id="clear-filters" type="button" class="secondary">清除筛选</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Fork 仓库</th><th>所有者</th><th>基本信息</th><th>近一年全站贡献</th></tr></thead>
+    <div class="filters">
+      <div class="filter-primary"><label><span data-i18n="searchUsername">搜索用户名</span><input id="search" type="search" data-i18n-placeholder="usernamePlaceholder" placeholder="输入 GitHub 用户名"></label>
+      <label><span data-i18n="sort">排序</span><select id="sort">
+        <option value="created:desc" data-i18n="sortForkDesc">Fork 时间：新 → 旧</option><option value="created:asc" data-i18n="sortForkAsc">Fork 时间：旧 → 新</option>
+        <option value="contributions:desc" data-i18n="sortContribDesc">贡献总数：高 → 低</option><option value="contributions:asc" data-i18n="sortContribAsc">贡献总数：低 → 高</option>
+        <option value="repositories:desc" data-i18n="sortReposDesc">公开仓库数：高 → 低</option><option value="repositories:asc" data-i18n="sortReposAsc">公开仓库数：低 → 高</option>
+        <option value="stars:desc" data-i18n="sortStarsDesc">Star 数：高 → 低</option><option value="stars:asc" data-i18n="sortStarsAsc">Star 数：低 → 高</option>
+        <option value="account_created:desc" data-i18n="sortAccountDesc">账号创建：新 → 旧</option><option value="account_created:asc" data-i18n="sortAccountAsc">账号创建：旧 → 新</option>
+      </select></label></div>
+      <div class="filter-dates">
+        <div class="date-filter"><strong data-i18n="accountCreatedTime">账号创建时间</strong><label><span data-i18n="from">从</span><input id="account-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="account-created-to" type="date"></label></div>
+        <div class="date-filter"><strong data-i18n="forkCreatedTime">Fork 创建时间</strong><label><span data-i18n="from">从</span><input id="fork-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="fork-created-to" type="date"></label></div>
+      </div>
+      <div class="filter-actions"><button id="clear-filters" type="button" class="secondary" data-i18n="clearFilters">清除筛选</button></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th data-i18n="forkRepository">Fork 仓库</th><th data-i18n="owner">所有者</th><th data-i18n="basicInfo">基本信息</th><th data-i18n="yearContributions">近一年全站贡献</th></tr></thead>
       <tbody id="results"></tbody></table></div>
-    <div class="pagination"><span id="page-label"></span><div><button id="prev" class="secondary">上一页</button>
-    <button id="next" class="secondary">下一页</button></div></div>
-    <p class="muted">贡献采用 GitHub API 可见数据，可能包含用户公开的私有贡献数量；总数不一定等于分类之和。
-      分页采集期间数据可能变化，结果并非同一时刻的完整快照。</p>
+    <div class="pagination"><span id="page-label"></span><div><button id="prev" class="secondary" data-i18n="previous">上一页</button>
+    <button id="next" class="secondary" data-i18n="next">下一页</button></div></div>
+    <p class="muted" data-i18n="dataCaveat">Counts use GitHub-visible data, including shared private contributions. Totals may differ from category sums, and data may change during collection.</p>
   </section>
-  <footer>CLASSMATES EXPLORER <span>本地运行 · 公开数据 · 按需探索</span></footer>
+  <footer>CLASSMATES EXPLORER <span data-i18n="footer">本地运行 · 公开数据 · 按需探索</span></footer>
 </main>
 </body></html>

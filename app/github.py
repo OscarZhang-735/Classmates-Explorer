@@ -59,6 +59,10 @@ class GitHubClient:
         self.last_start = 0.0
         self.cooldown_key = f"cooldown:{settings.credential_id}"
 
+    def update_token(self, token: str):
+        self.client.headers["Authorization"] = f"Bearer {token}"
+        self.cooldown_key = f"cooldown:{self.settings.credential_id}"
+
     def check(self, task_id):
         task = self.store.get(task_id)
         if task["status"] == "cancelled":

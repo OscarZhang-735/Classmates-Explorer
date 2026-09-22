@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, model_validator, field_validator
 
 
 def normalize_repository_url(value: str) -> str:
@@ -30,6 +30,18 @@ class TaskInput(BaseModel):
     @classmethod
     def validate_url(cls, value: str) -> str:
         return normalize_repository_url(value)
+
+
+class TokenInput(BaseModel):
+    token: SecretStr = Field(min_length=20, max_length=255)
+
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, value: SecretStr) -> SecretStr:
+        token = value.get_secret_value()
+        if token != token.strip() or any(character.isspace() for character in token):
+            raise ValueError("GitHub Token 不能包含空白字符")
+        return value
 
 
 class ImportOwner(BaseModel):
