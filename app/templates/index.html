@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Classmates Explorer · Fork 探索</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header><span class="eyebrow">GITHUB / COMMUNITY EXPLORER</span><a href="/docs">API 文档 ↗</a></header>
+  <section class="intro"><h1>Classmates Explorer</h1>
+    <p>查看公开项目的一级 Fork、所有者资料与近一年的 GitHub 全站贡献。</p></section>
+  {% if not configured %}<p class="notice">尚未配置 GitHub Token。请在服务端 .env 中设置 GITHUB_TOKEN 后重启。</p>{% endif %}
+  <form id="query-form"><label for="repo-url">公开仓库 URL</label><div class="input-row">
+    <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required autocomplete="off">
+    <button id="submit" type="submit">探索 Fork →</button></div>
+    <small>最多展示最新 {{ limit }} 个一级 Fork · 不包含二级 Fork</small></form>
+  <p id="error" role="alert" hidden></p>
+  <section id="task-panel" hidden aria-live="polite">
+    <div class="task-heading"><h2 id="task-title">准备查询</h2><div>
+      <button id="retry" class="secondary" hidden>重试未完成部分</button>
+      <button id="cancel" class="secondary">取消任务</button></div></div>
+    <p id="progress"></p><p id="interval" class="muted"></p><p id="task-notice" class="notice" hidden></p>
+    <div class="filters"><label>搜索用户名 <input id="search" type="search" placeholder="输入 GitHub 用户名"></label>
+      <label>排序 <select id="sort"><option value="created">Fork 创建时间 ↓</option>
+      <option value="contributions">贡献总数 ↓</option></select></label></div>
+    <div class="table-wrap"><table><thead><tr><th>Fork 仓库</th><th>所有者</th><th>基本信息</th><th>近一年全站贡献</th></tr></thead>
+      <tbody id="results"></tbody></table></div>
+    <div class="pagination"><span id="page-label"></span><div><button id="prev" class="secondary">上一页</button>
+    <button id="next" class="secondary">下一页</button></div></div>
+    <p class="muted">贡献采用 GitHub API 可见数据，可能包含用户公开的私有贡献数量；总数不一定等于分类之和。
+      分页采集期间数据可能变化，结果并非同一时刻的完整快照。</p>
+  </section>
+  <footer>CLASSMATES EXPLORER <span>本地运行 · 公开数据 · 按需探索</span></footer>
+</main>
+</body></html>
