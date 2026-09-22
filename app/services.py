@@ -1,10 +1,12 @@
 import asyncio
 import time
+from datetime import timedelta
 
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import (CONTRIBUTIONS, FORKS, META, BatchTooLarge, Cancelled,
                         GitHubClient, GitHubError, collected_at)
+from app.scoring import timestamp
 
 
 class ContributionService:
@@ -14,13 +16,16 @@ class ContributionService:
         self.settings, self.store, self.github = settings, store, github
 
     def cache_key(self, task, owner_id):
-        return f"contribution:{task['credential_id']}:{owner_id}:{task['from']}:{task['to']}"
+        return f"contribution:v3:{task['credential_id']}:{owner_id}:{task['from']}:{task['to']}"
 
     async def fetch(self, task_id: str, ids: list[str], singleton_retries=0):
         task = self.github.check(task_id)
         try:
+            # GitHub calendar queries include the endpoint's date. Stop before
+            # midnight so the current, unfinished UTC day is never requested.
+            query_to = (timestamp(task["to"]) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
             result = await self.github.query(task_id, CONTRIBUTIONS,
-                                            {"ids": ids, "from": task["from"], "to": task["to"]}, batch=True)
+                                            {"ids": ids, "from": task["from"], "to": query_to}, batch=True)
         except BatchTooLarge as error:
             if len(ids) > 1:
                 middle = len(ids) // 2
@@ -66,6 +71,17 @@ class ContributionService:
                      "pull_requests": summary["totalPullRequestContributions"],
                      "reviews": summary["totalPullRequestReviewContributions"],
                      "restricted": summary["restrictedContributionsCount"]}
+            calendar = summary["contributionCalendar"]
+            if calendar.get("weeks") is not None:
+                start, end = timestamp(task["from"]), timestamp(task["to"])
+                days = {day["date"]: day["contributionCount"]
+                        for week in calendar["weeks"] for day in week["contributionDays"]
+                        if start <= timestamp(day["date"]) < end}
+                # Only use a full calendar; partial data is unknown, not inactivity.
+                if len(days) == (end - start).days and sum(days.values()) == value["total"]:
+                    active = [day for day, amount in days.items() if amount > 0]
+                    value["active_weeks"] = len({(timestamp(day) - start).days // 7 for day in active})
+                    value["last_contribution_at"] = max(active) + "T00:00:00Z" if active else None
             self.store.cache_put(self.cache_key(task, owner_id), value, self.settings.contribution_cache_seconds)
             self.store.set_contribution(task_id, owner_id, value)
 
@@ -141,7 +157,7 @@ class Runner:
                 pass
 
     def owner(self, raw: dict, credential: str):
-        key = f"owner:v2:{credential}:{raw['id']}"
+        key = f"owner:v3:{credential}:{raw['id']}"
         cached = self.store.cache_get(key)
         if cached:
             # Keep stable ID caching without retaining a stale renamed login/URL.
@@ -153,6 +169,13 @@ class Runner:
                  "account_created_at": raw.get("createdAt"),
                  "public_repositories": (raw.get("repositories") or {}).get("totalCount"),
                  "collected_at": collected_at()}
+        top = raw.get("topRepositories")
+        if top is not None and top.get("totalCount") is not None:
+            value["original_repositories"] = top["totalCount"]
+            nodes = top.get("nodes")
+            if (nodes is not None and len(nodes) == min(10, top["totalCount"])
+                    and all(node is not None and node.get("stargazerCount") is not None for node in nodes)):
+                value["top_repository_stars"] = sum(node["stargazerCount"] for node in nodes)
         self.store.cache_put(key, value, self.settings.owner_cache_seconds)
         return value
 

@@ -62,6 +62,8 @@ class ImportOwner(BaseModel):
     website_url: str | None = Field(None, max_length=500)
     account_created_at: datetime | None = None
     public_repositories: int | None = Field(None, ge=0)
+    original_repositories: int | None = Field(None, ge=0)
+    top_repository_stars: int | None = Field(None, ge=0)
     collected_at: datetime | None = None
 
     @field_validator("url")
@@ -107,6 +109,8 @@ class ImportContribution(BaseModel):
     pull_requests: int | None = Field(None, ge=0)
     reviews: int | None = Field(None, ge=0)
     restricted: int | None = Field(None, ge=0)
+    active_weeks: int | None = Field(None, ge=0, le=53)
+    last_contribution_at: datetime | None = None
     error: dict | None = None
 
     @model_validator(mode="after")
@@ -131,6 +135,8 @@ class ImportFork(BaseModel):
     owner: ImportOwner
     collected_at: datetime
     contribution: ImportContribution
+    # Accepted for snapshot round-trips; always recomputed from source fields.
+    score: dict | None = None
 
     @field_validator("url")
     @classmethod
@@ -154,7 +160,7 @@ class ImportTask(BaseModel):
     limit: int = Field(ge=1, le=2_147_483_647)
     unlimited: bool = False
     forks_done: bool
-    data_version: int = Field(1, ge=1, le=2)
+    data_version: int = Field(1, ge=1, le=3)
 
     @field_validator("repository_url")
     @classmethod

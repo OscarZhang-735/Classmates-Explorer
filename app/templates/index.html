@@ -4,8 +4,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Classmates Explorer · Explore Forks</title>
   <script>document.documentElement.dataset.theme = localStorage.getItem('explorer-theme') === 'light' ? 'light' : 'dark';</script>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=7">
+  <script src="/static/app.js?v=7" defer></script>
 </head>
 <body>
 <main>
@@ -36,6 +36,8 @@
     <div class="filters">
       <div class="filter-primary"><label><span data-i18n="searchUsername">搜索用户名</span><input id="search" type="search" data-i18n-placeholder="usernamePlaceholder" placeholder="输入 GitHub 用户名"></label>
       <label><span data-i18n="sort">排序</span><select id="sort">
+        <option value="score:desc" data-i18n="sortScoreDesc">探索评分：高 → 低</option><option value="score:asc" data-i18n="sortScoreAsc">探索评分：低 → 高</option>
+        <option value="professional:desc" data-i18n="sortProfessional">专业信号：高 → 低</option><option value="activity:desc" data-i18n="sortActivity">活跃度：高 → 低</option>
         <option value="created:desc" data-i18n="sortForkDesc">Fork 时间：新 → 旧</option><option value="created:asc" data-i18n="sortForkAsc">Fork 时间：旧 → 新</option>
         <option value="contributions:desc" data-i18n="sortContribDesc">贡献总数：高 → 低</option><option value="contributions:asc" data-i18n="sortContribAsc">贡献总数：低 → 高</option>
         <option value="repositories:desc" data-i18n="sortReposDesc">公开仓库数：高 → 低</option><option value="repositories:asc" data-i18n="sortReposAsc">公开仓库数：低 → 高</option>
@@ -46,9 +48,10 @@
         <div class="date-filter"><strong data-i18n="accountCreatedTime">账号创建时间</strong><label><span data-i18n="from">从</span><input id="account-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="account-created-to" type="date"></label></div>
         <div class="date-filter"><strong data-i18n="forkCreatedTime">Fork 创建时间</strong><label><span data-i18n="from">从</span><input id="fork-created-from" type="date"></label><label><span data-i18n="to">至</span><input id="fork-created-to" type="date"></label></div>
       </div>
-      <div class="filter-actions"><button id="clear-filters" type="button" class="secondary" data-i18n="clearFilters">清除筛选</button></div>
+      <div class="filter-actions"><label class="score-scaling"><input id="scale-scores" type="checkbox"><span data-i18n="scaleScores">曲线缩放</span></label><button id="clear-filters" type="button" class="secondary" data-i18n="clearFilters">清除筛选</button></div>
     </div>
-    <div class="table-wrap"><table><thead><tr><th data-i18n="forkRepository">Fork 仓库</th><th data-i18n="owner">所有者</th><th data-i18n="basicInfo">基本信息</th><th data-i18n="yearContributions">近一年全站贡献</th></tr></thead>
+    <details class="scoring-guide"><summary data-i18n="scoreGuide">评分规则</summary><p data-i18n="scoreGuideText"></p></details>
+    <div class="table-wrap"><table><thead><tr><th data-i18n="forkRepository">Fork 仓库</th><th data-i18n="owner">所有者</th><th data-i18n="basicInfo">基本信息</th><th data-i18n="yearContributions">近一年全站贡献</th><th data-i18n="explorationScore">探索评分</th></tr></thead>
       <tbody id="results"></tbody></table></div>
     <div class="pagination"><span id="page-label"></span><div><button id="prev" class="secondary" data-i18n="previous">上一页</button>
     <button id="next" class="secondary" data-i18n="next">下一页</button></div></div>

@@ -179,7 +179,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                 if (task["repository_url"] == body.repository_url and task["date"] == today
                         and task["credential_id"] == settings.credential_id and task["limit"] == limit
                         and task.get("unlimited", False) == unlimited
-                        and task.get("data_version") == 2):
+                        and task.get("data_version") == 3):
                     cached = (task["status"] == "completed" and
                               time.time() - (task["completed_at"] or 0) < settings.result_cache_seconds)
                     if task["status"] in ACTIVE or cached:
@@ -198,7 +198,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     @app.get("/api/tasks/{task_id}/results")
     async def results(task_id: str, page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=100),
                       search: str = Query("", max_length=100),
-                      sort: Literal["created", "contributions", "repositories", "stars", "account_created"] = "created",
+                      sort: Literal["created", "contributions", "repositories", "stars", "account_created", "score", "professional", "activity"] = "score",
                       direction: Literal["asc", "desc"] = "desc",
                       account_created_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$"),
                       account_created_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$"),
@@ -247,6 +247,9 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             rows = [r for r in rows if in_range(r.get("created_at"), fork_from, fork_to)]
 
         getters = {
+            "score": lambda r: r["score"]["total"],
+            "professional": lambda r: r["score"]["professional"],
+            "activity": lambda r: r["score"]["activity"],
             "created": lambda r: r.get("created_at"),
             "contributions": lambda r: r["contribution"].get("total"),
             "repositories": lambda r: r["owner"].get("public_repositories"),
@@ -259,7 +262,8 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         known.sort(key=lambda row: (getter(row), row["id"]), reverse=direction == "desc")
         rows = known + sorted(unknown, key=lambda row: row["id"])
         return {"items": rows[(page - 1) * per_page:page * per_page], "total": len(rows),
-                "page": page, "per_page": per_page}
+                "page": page, "per_page": per_page,
+                "max_score": max((r["score"]["total"] for r in rows if r["score"]["total"] is not None), default=None)}
 
     @app.get("/api/tasks/{task_id}/export")
     async def export(task_id: str, format: Literal["json", "csv"] = "json"):
@@ -279,7 +283,9 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                   "bio", "company", "location", "website_url", "account_created_at",
                   "public_repositories", "owner_collected_at",
                   "contribution_status", "contribution_from", "contribution_to", "contribution_collected_at",
-                  "total", "commits", "pull_requests", "issues", "reviews", "restricted", "error"]
+                  "total", "commits", "pull_requests", "issues", "reviews", "restricted", "error",
+                  "original_repositories", "top_repository_stars", "active_weeks", "last_contribution_at",
+                  "score", "score_professional", "score_activity", "score_coverage", "score_status", "score_version"]
         writer = csv.DictWriter(output, fieldnames=fields)
         writer.writeheader()
         for row in sorted(rows, key=lambda item: (item["created_at"], item["id"]), reverse=True):
@@ -300,7 +306,14 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                       "total": contribution.get("total"), "commits": contribution.get("commits"),
                       "pull_requests": contribution.get("pull_requests"), "issues": contribution.get("issues"),
                       "reviews": contribution.get("reviews"), "restricted": contribution.get("restricted"),
-                      "error": (contribution.get("error") or {}).get("message")}
+                      "error": (contribution.get("error") or {}).get("message"),
+                      "original_repositories": owner.get("original_repositories"),
+                      "top_repository_stars": owner.get("top_repository_stars"),
+                      "active_weeks": contribution.get("active_weeks"),
+                      "last_contribution_at": contribution.get("last_contribution_at"),
+                      "score": row["score"]["total"], "score_professional": row["score"]["professional"],
+                      "score_activity": row["score"]["activity"], "score_coverage": row["score"]["coverage"],
+                      "score_status": row["score"]["status"], "score_version": row["score"]["version"]}
             writer.writerow({key: csv_value(value) for key, value in values.items()})
         return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{filename(task, "csv")}"'})

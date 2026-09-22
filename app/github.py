@@ -18,12 +18,14 @@ FORKS = """query($owner:String!,$repo:String!,$cursor:String,$count:Int!){
  totalCount pageInfo{hasNextPage endCursor} nodes{
  id nameWithOwner url createdAt pushedAt stargazerCount parent{id}
  owner{__typename id login avatarUrl url
- ... on User{name bio company location websiteUrl createdAt repositories(first:1,privacy:PUBLIC){totalCount}}
+ ... on User{name bio company location websiteUrl createdAt repositories(first:1,privacy:PUBLIC){totalCount}
+ topRepositories:repositories(first:10,privacy:PUBLIC,isFork:false,ownerAffiliations:[OWNER],
+ orderBy:{field:STARGAZERS,direction:DESC}){totalCount nodes{stargazerCount}}}
  ... on Organization{name description location websiteUrl createdAt repositories(first:1,privacy:PUBLIC){totalCount}}}
  }}} rateLimit{cost remaining resetAt} }"""
 CONTRIBUTIONS = """query($ids:[ID!]!,$from:DateTime!,$to:DateTime!){
  nodes(ids:$ids){id ... on User{contributionsCollection(from:$from,to:$to){
- contributionCalendar{totalContributions} totalCommitContributions
+ contributionCalendar{totalContributions weeks{contributionDays{date contributionCount}}} totalCommitContributions
  totalIssueContributions totalPullRequestContributions
  totalPullRequestReviewContributions restrictedContributionsCount
  }}} rateLimit{cost remaining resetAt} }"""

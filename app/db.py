@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import JSON, Float, String, create_engine, event, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+from app.scoring import score_user
+
 ACTIVE = ("queued", "running", "waiting_rate_limit")
 
 
@@ -80,7 +82,7 @@ class Store:
                     payload={"phase": "repository", "from": iso(end - timedelta(days=365)),
                              "to": iso(end), "date": end.date().isoformat(), "limit": limit,
                              "unlimited": unlimited,
-                             "data_version": 2,
+                             "data_version": 3,
                              "cursor": None, "forks_done": False, "total_direct_forks": None,
                              "truncated": False, "error": None, "retryable": True,
                              "resume_at": None, "requests": 0, "points": 0,
@@ -136,8 +138,14 @@ class Store:
 
     def rows(self, task_id: str) -> list[dict]:
         with self.session() as session:
+            task = session.get(Task, task_id)
             query = select(Fork).where(Fork.task_id == task_id)
-            return [row.payload for row in session.scalars(query)]
+            # Scores are derived, including for historical/imported rows. Never trust an
+            # imported score or use the current date: the same snapshot stays reproducible.
+            return [{**row.payload, "score": score_user(
+                row.payload["owner"], row.payload["contribution"],
+                task.payload["from"], task.payload["to"], task.status not in ACTIVE)}
+                for row in session.scalars(query)]
 
     def save_page(self, task_id: str, rows: list[dict], cursor, done: bool, total: int):
         # Commit rows and cursor together: crash recovery never skips a page.
