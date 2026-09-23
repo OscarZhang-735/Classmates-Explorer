@@ -44,6 +44,10 @@ class BatchTooLarge(GitHubError):
     pass
 
 
+class ForkPageTooLarge(GitHubError):
+    """Retry the same Fork cursor with fewer nodes; never commit partial data."""
+
+
 class Deferred(Exception):
     """Release the worker while an upstream cooldown is in effect."""
 
@@ -121,6 +125,7 @@ class GitHubClient:
     async def query(self, task_id: str, query: str, variables: dict, batch=False) -> dict:
         async with self.lock:
             retries = 0
+            shrinkable_forks = query == FORKS and variables.get("count", 1) > 1
             while True:
                 task = self.check(task_id)
                 if (not task.get("unlimited", False)
@@ -136,8 +141,10 @@ class GitHubClient:
                 try:
                     async with asyncio.timeout(self.settings.request_timeout):
                         response = await self.client.post("/graphql", json={"query": query, "variables": variables})
-                except (httpx.RequestError, TimeoutError):
+                except (httpx.RequestError, TimeoutError) as exc:
                     self.check(task_id)
+                    if shrinkable_forks and isinstance(exc, (httpx.ReadTimeout, TimeoutError)):
+                        raise ForkPageTooLarge("fork_page_resource_limit", "GitHub Fork 查询超时，正在缩小分页") from None
                     if batch:
                         raise BatchTooLarge("upstream_timeout", "GitHub 贡献查询超时") from None
                     if retries >= self.settings.max_retries:
@@ -200,6 +207,11 @@ class GitHubClient:
                 if response.status_code == 403:
                     raise GitHubError("access_denied", "GitHub 拒绝访问，请检查凭据权限", False)
                 resource_error = any(s in error_text for s in ("timeout", "timed out", "resource limit", "maximum", "too large"))
+                if shrinkable_forks and (response.status_code in (502, 504) or
+                                         (response.status_code == 200 and resource_error)):
+                    raise ForkPageTooLarge("fork_page_resource_limit", "GitHub Fork 查询超时或超出资源限制，正在缩小分页")
+                if query == FORKS and response.status_code == 200 and resource_error:
+                    raise GitHubError("fork_page_resource_limit", "最小分页仍超出 GitHub 查询资源限制，请稍后重试")
                 if batch and (response.status_code in (502, 504) or resource_error):
                     raise BatchTooLarge("batch_resource_limit", "GitHub 贡献查询超时或超出资源限制")
                 if response.status_code in (502, 503, 504):
@@ -207,6 +219,8 @@ class GitHubClient:
                         await self.pause(task_id, 2 ** retries + random.random())
                         retries += 1
                         continue
+                    if shrinkable_forks:
+                        raise ForkPageTooLarge("fork_page_resource_limit", "GitHub Fork 查询暂时不可用，正在缩小分页")
                     raise GitHubError("upstream_unavailable", "GitHub 暂时不可用")
                 if response.status_code >= 400:
                     raise GitHubError("upstream_error", "GitHub 请求被拒绝", False)

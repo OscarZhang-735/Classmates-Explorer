@@ -95,6 +95,7 @@ Object.assign(messages.en, {
   error_upstream_unavailable:'GitHub is temporarily unavailable',error_rate_limit_exhausted:'GitHub continues to rate limit requests; retry later',
   error_token_invalid:'GITHUB_TOKEN is invalid or expired',error_access_denied:'GitHub denied access; check token permissions',
   error_batch_resource_limit:'GitHub contribution query exceeded resource limits',error_upstream_error:'GitHub rejected the request',
+  error_fork_page_resource_limit:'GitHub could not process even the smallest Fork page. Try again later.',
   error_graphql_error:'GitHub returned a query error',error_imported_partial:'This imported snapshot is incomplete',
   error_unknown:'The task failed; check the task details or retry later',
 });
