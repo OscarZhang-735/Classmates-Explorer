@@ -1,9 +1,17 @@
 const $ = (id) => document.getElementById(id);
-const terminal = new Set(['completed', 'partial', 'failed', 'cancelled']);
+const terminal = new Set(['completed', 'partial', 'failed', 'cancelled', 'paused_credentials']);
 let taskId = null, page = 1, timer = null, generation = 0, resultRequest = 0, pollRequest = 0;
 let language = localStorage.getItem('explorer-language') === 'zh-CN' ? 'zh-CN' : 'en';
 let theme = localStorage.getItem('explorer-theme') === 'light' ? 'light' : 'dark';
 let lastTask = null, lastResult = null, lastError = '';
+const apiBase = (window.EXPLORER_CONFIG?.apiBase || '').replace(/\/$/, '');
+let remoteMode = true, configured = false, sessionToken = '', heartbeatTimer = null, historyPage = 1;
+let appConfig = null;
+const storagePrefix = `explorer:${location.pathname}:${apiBase}:`;
+const sessionGet = key => sessionStorage.getItem(storagePrefix + key);
+const sessionSet = (key, value) => sessionStorage.setItem(storagePrefix + key, value);
+const sessionRemove = key => sessionStorage.removeItem(storagePrefix + key);
+
 const messages = {
   'zh-CN': {
     portfolioStarsBadge:'★ {0}',portfolioStarsTitle:'自有公开非 Fork 仓库中，Stars 最高的最多 10 个仓库合计',
@@ -90,6 +98,32 @@ Object.assign(messages.en, {
   error_graphql_error:'GitHub returned a query error',error_imported_partial:'This imported snapshot is incomplete',
   error_unknown:'The task failed; check the task details or retry later',
 });
+Object.assign(messages['zh-CN'], {
+  logout:'清除凭据并退出', sessionNotice:'Token 仅保存在当前浏览器会话中，通过 HTTPS 交给服务器临时使用，不写入服务器磁盘。浏览器可能恢复已关闭会话的存储；退出请点击清除凭据。页面失联约 180 秒后任务暂停，返回后手动恢复。',
+  history:'我的任务',refreshHistory:'刷新任务列表',resumeTask:'恢复任务',paused_credentials:'已暂停，等待会话凭据',
+  sessionExpired:'会话已失效，请重新提供 Token',remoteTokenMissing:'请先在当前会话配置自己的 GitHub Token',
+  remoteTokenSave:'在当前会话使用 Token'
+});
+Object.assign(messages.en, {
+  logout:'Clear credentials and exit',sessionNotice:'Your token stays in browser session storage and is sent over HTTPS for temporary server use, never saved to server disk. Browsers may restore closed sessions; use Clear credentials to exit. Tasks pause after about 180 seconds offline and require manual resume.',
+  history:'My tasks',refreshHistory:'Refresh tasks',resumeTask:'Resume task',paused_credentials:'Paused; credentials required',
+  sessionExpired:'Session expired. Provide your token again.',remoteTokenMissing:'Configure your own GitHub token for this session first.',
+  remoteTokenSave:'Use token for this session'
+});
+Object.assign(messages.en, {
+  githubCredentialInvalid:'GitHub token is invalid, expired, or lacks permission.',
+  githubLimited:'GitHub is rate limiting requests. Try again later.',githubUnavailable:'GitHub is temporarily unavailable.',
+  sessionCapacity:'Session limit reached. Wait for inactive sessions to expire.',
+  serviceBusy:'Service is busy. Try again later.',credentialBusy:'This credential already has an active task.',
+  resumeConflict:'This task cannot be resumed in its current state.',originDenied:'This browser origin is not allowed.'
+});
+Object.assign(apiErrorKeys, {
+  'GitHub Token 无效、已过期或权限不足':'githubCredentialInvalid','GitHub 暂时限流':'githubLimited','GitHub 暂时不可用':'githubUnavailable',
+  '会话数量已达上限':'sessionCapacity','服务繁忙，请稍后重试':'serviceBusy','当前凭据已有活动任务':'credentialBusy',
+  '任务当前不可恢复':'resumeConflict','不允许的请求来源':'originDenied',
+  '会话已失效，请重新提供 Token':'sessionExpired','请提供有效的会话凭据':'sessionExpired',
+  '请先在当前会话配置自己的 GitHub Token':'remoteTokenMissing'
+});
 function t(key, ...args) { return (messages[language][key] ?? messages.en[key] ?? key).replace(/\{(\d+)\}/g, (_, i) => args[Number(i)] ?? ''); }
 function apiError(message) {
   if (language !== 'en') return message || t('invalidRequest');
@@ -133,11 +167,25 @@ function applyLanguage() {
   applyTheme();
   if (lastTask) renderTask(lastTask);
   if (lastResult) renderResults(lastResult);
+  if (remoteMode) $('save-token').textContent = t('remoteTokenSave');
   error(lastError);
 }
 
+async function apiFetch(url, options = {}) {
+  if (!url.startsWith('/api/')) throw new Error('Invalid API path');
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (remoteMode && sessionToken && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${sessionToken}`);
+  const response = await fetch(apiBase + url, {...options, headers, credentials:'omit', cache:'no-store', redirect:'error'});
+  if (response.status === 401 && url !== '/api/sessions') {
+    sessionToken = ''; sessionRemove('session'); clearInterval(heartbeatTimer); clearTimeout(timer);
+    renderTokenStatus(false);
+  }
+  return response;
+}
+
 async function api(url, options = {}) {
-  const response = await fetch(url, {headers:{'Content-Type':'application/json'}, ...options});
+  const response = await apiFetch(url, options);
   const body = await response.json();
   if (!response.ok) {
     let message = typeof body.detail === 'string' ? body.detail : t('invalidRequest');
@@ -253,6 +301,7 @@ function renderTask(task) {
   if (task.status === 'cancelled') notices.push(t('cancelledNotice'));
   $('task-notice').textContent = notices.join(' '); $('task-notice').hidden = !notices.length;
   $('cancel').hidden = terminal.has(task.status);
+  $('resume-task').hidden = task.status !== 'paused_credentials';
   $('retry').hidden = !(['partial','failed','cancelled'].includes(task.status) && task.retryable);
   for (const format of ['json','csv']) {
     const button = $(`export-${format}`), enabled = task.status === 'completed';
@@ -270,17 +319,19 @@ async function poll() {
   } catch (e) {
     if (version === generation && request === pollRequest) {
       error(e.message);
-      if (e.status === 404) { localStorage.removeItem('explorer-task'); $('task-panel').hidden = true; }
-      else timer = setTimeout(poll, 5000);
+      if (e.status === 404) { sessionRemove('task'); $('task-panel').hidden = true; }
+      else if (e.status !== 401) timer = setTimeout(poll, 5000);
     }
   }
 }
 $('query-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); error(''); $('submit').disabled = true;
+  event.preventDefault();
+  if (!configured || (remoteMode && !sessionToken)) { error('请先在当前会话配置自己的 GitHub Token'); return; }
+  error(''); $('submit').disabled = true;
   try {
     const task = await api('/api/tasks', {method:'POST', body:JSON.stringify({repository_url:$('repo-url').value})});
     taskId = task.id; generation++; page = 1; lastTask = null; lastResult = null;
-    localStorage.setItem('explorer-task', taskId); await poll();
+    sessionSet('task', taskId); await poll();
   } catch (e) { error(e.message); } finally { $('submit').disabled = false; }
 });
 async function saveToken() {
@@ -288,7 +339,13 @@ async function saveToken() {
   if (!token) { $('github-token').focus(); return; }
   error(''); $('save-token').disabled = true;
   try {
-    const result = await api('/api/config/github', {method:'POST', body:JSON.stringify({token})});
+    let result;
+    if (remoteMode) {
+      await establishSession(token);
+      result = {configured:true};
+    } else {
+      result = await api('/api/config/github', {method:'POST', body:JSON.stringify({token})});
+    }
     $('github-token').value = '';
     $('github-token').type = 'password';
     $('reveal-token').textContent = t('showToken');
@@ -304,7 +361,7 @@ $('reveal-token').onclick = async () => {
   if (!window.confirm(t('confirmRevealToken'))) return;
   $('reveal-token').disabled = true; error('');
   try {
-    const result = await api('/api/config/github/reveal', {method:'POST'});
+    const result = remoteMode ? {token:sessionGet('token') || ''} : await api('/api/config/github/reveal', {method:'POST'});
     input.value = result.token; input.type = 'text'; $('reveal-token').textContent = t('hideToken');
   } catch (e) { error(e.message); } finally { $('reveal-token').disabled = false; }
 };
@@ -337,15 +394,22 @@ $('import-file').onchange = async () => {
     if (file.size > maxBytes) throw new Error(`导入文件不能超过 ${Math.floor(maxBytes / 1024 / 1024)} MB`);
     const task = await api('/api/imports', {method:'POST', body:await file.text()});
     taskId = task.id; generation++; page = 1; lastTask = null; lastResult = null;
-    localStorage.setItem('explorer-task', taskId); await poll();
+    sessionSet('task', taskId); await poll();
   } catch (e) { error(e.message); }
   finally { $('import').disabled = false; $('import-file').value = ''; }
 };
-function download(format) {
+async function download(format) {
   if (!taskId) return;
-  const anchor = document.createElement('a');
-  anchor.href = `/api/tasks/${encodeURIComponent(taskId)}/export?format=${format}`;
-  anchor.download = ''; document.body.append(anchor); anchor.click(); anchor.remove();
+  try {
+    const response = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/export?format=${format}`);
+    if (!response.ok) throw new Error((await response.json()).detail);
+    const blob = await response.blob(), url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `export.${format}`;
+    document.body.append(anchor); anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { error(e.message); }
 }
 $('export-json').onclick = () => download('json');
 $('export-csv').onclick = () => download('csv');
@@ -401,6 +465,80 @@ $('theme-toggle').onclick = () => {
 };
 let searchTimer;
 $('search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => {page=1;refreshResults().catch(e=>error(e.message));},250); };
-applyLanguage();
-const saved = localStorage.getItem('explorer-task');
-if (saved && /^[a-f0-9]{32}$/.test(saved)) { taskId = saved; poll(); }
+function resetTaskView() {
+  clearTimeout(timer); generation++; taskId = null; lastTask = null; lastResult = null;
+  $('task-panel').hidden = true;
+  $('export-json').disabled = true; $('export-csv').disabled = true;
+}
+async function loadHistory() {
+  if (!remoteMode || !sessionToken) return;
+  const tasks = await api(`/api/tasks?page=${historyPage}&per_page=20`);
+  const select = $('history-select'); select.replaceChildren();
+  const placeholder = new Option(t('history'), ''); select.add(placeholder);
+  for (const task of tasks.items) select.add(new Option(`${task.repository_url} · ${t(task.status)}`, task.id));
+  select.value = taskId || '';
+  $('history-prev').disabled = historyPage <= 1;
+  $('history-next').disabled = historyPage * 20 >= tasks.total;
+}
+async function establishSession(token) {
+  const result = await api('/api/sessions', {method:'POST', headers:{Authorization:`Bearer ${token}`}});
+  const oldSession = sessionToken;
+  if (oldSession) {
+    try { await api('/api/session/logout', {method:'POST', headers:{Authorization:`Bearer ${oldSession}`}}); } catch (_) { /* expires by lease */ }
+  }
+  if (sessionGet('token') !== token) { resetTaskView(); sessionRemove('task'); }
+  sessionSet('token', token); sessionToken = result.session_token; sessionSet('session', sessionToken);
+  renderTokenStatus(true); clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(async () => {
+    if (!sessionToken) return;
+    try { await api('/api/session/heartbeat', {method:'POST'}); }
+    catch (e) { error(e.message); }
+  }, appConfig.heartbeat_seconds * 1000);
+  await loadHistory();
+  const saved = sessionGet('task');
+  if (saved && /^[a-f0-9]{32}$/.test(saved)) { taskId = saved; await poll(); }
+}
+$('logout').onclick = async () => {
+  try { if (sessionToken) await api('/api/session/logout', {method:'POST'}); }
+  catch (e) { error(e.message); }
+  finally {
+    sessionToken = ''; for (const key of ['token','session','task']) sessionRemove(key);
+    clearInterval(heartbeatTimer); resetTaskView(); renderTokenStatus(false);
+    $('github-token').value = ''; $('github-token').type = 'password'; $('history-select').replaceChildren();
+  }
+};
+$('resume-task').onclick = async () => {
+  $('resume-task').disabled = true;
+  try { await api(`/api/tasks/${taskId}/resume`, {method:'POST'}); error(''); await poll(); }
+  catch (e) { error(e.message); } finally { $('resume-task').disabled = false; }
+};
+$('history-select').onchange = async () => {
+  if (!$('history-select').value) return;
+  resetTaskView(); taskId = $('history-select').value; sessionSet('task', taskId); page = 1; await poll();
+};
+$('history-refresh').onclick = () => loadHistory().catch(e => error(e.message));
+$('history-prev').onclick = () => { historyPage--; loadHistory().catch(e => error(e.message)); };
+$('history-next').onclick = () => { historyPage++; loadHistory().catch(e => error(e.message)); };
+async function initialize() {
+  for (const id of ['submit','save-token','import','unlimited-mode']) $(id).disabled = true;
+  applyLanguage();
+  try {
+    if (apiBase && (new URL(apiBase).protocol !== 'https:' || new URL(apiBase).origin !== apiBase)) throw new Error('API URL must be an HTTPS origin');
+    appConfig = await api('/api/config'); remoteMode = appConfig.mode === 'remote';
+    if (!remoteMode && apiBase) throw new Error('Remote frontend requires remote API mode');
+    $('limit-note').dataset.limit = appConfig.max_forks;
+    $('import-file').dataset.maxBytes = appConfig.max_import_bytes;
+    $('unlimited-mode').closest('.unlimited-row, label, div').hidden = remoteMode;
+    $('logout').hidden = !remoteMode; $('session-notice').hidden = !remoteMode; $('task-history').hidden = !remoteMode;
+    $('api-docs').href = apiBase + '/docs';
+    renderUnlimitedMode(appConfig.unlimited_mode); renderTokenStatus(appConfig.configured);
+    configured = true; applyLanguage();
+    for (const id of ['submit','save-token','import','unlimited-mode']) $(id).disabled = false;
+    if (remoteMode && sessionGet('token')) await establishSession(sessionGet('token'));
+    else if (!remoteMode) {
+      const saved = sessionGet('task');
+      if (saved && /^[a-f0-9]{32}$/.test(saved)) { taskId = saved; await poll(); }
+    }
+  } catch (e) { error(e.message); }
+}
+initialize();

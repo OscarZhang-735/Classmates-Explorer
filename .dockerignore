@@ -1,0 +1,12 @@
+**
+!pyproject.toml
+!app/
+!app/*.py
+!app/templates/
+!app/templates/index.html
+!app/static/
+!app/static/app.js
+!app/static/style.css
+!app/static/config.js
+!deploy/
+!deploy/*.py

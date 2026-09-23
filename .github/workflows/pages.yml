@@ -1,0 +1,44 @@
+name: Publish Pages manually
+on:
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: HTTPS API origin, e.g. https://api.example.com (no trailing slash)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install '.[test]'
+      - run: python -m pytest -q
+      - run: node --check app/static/app.js
+      - name: Build public files only
+        env:
+          PAGES_API_BASE: ${{ inputs.api_base }}
+        run: python scripts/build_pages.py --api-base "$PAGES_API_BASE" --output dist/pages
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

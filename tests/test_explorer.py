@@ -19,7 +19,7 @@ from app.services import Runner
 
 
 def settings(tmp_path, **kwargs):
-    return Settings(_env_file=None, database_url=f"sqlite:///{tmp_path / 'test.sqlite3'}",
+    return Settings(app_mode="local", _env_file=None, database_url=f"sqlite:///{tmp_path / 'test.sqlite3'}",
                     github_token=SecretStr("test-secret"), github_request_interval=0,
                     **kwargs)
 

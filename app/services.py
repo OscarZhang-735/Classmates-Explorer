@@ -5,7 +5,7 @@ from datetime import timedelta
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import (CONTRIBUTIONS, FORKS, META, BatchTooLarge, Cancelled,
-                        GitHubClient, GitHubError, collected_at)
+                        GitHubClient, GitHubError, Deferred, collected_at)
 from app.scoring import timestamp
 
 
@@ -115,7 +115,7 @@ class Runner:
 
     async def start(self):
         for task in self.store.tasks(ACTIVE):
-            self.store.update(task["id"], status="queued")
+            self.store.update(task["id"], status="paused_credentials" if self.settings.app_mode == "remote" else "queued")
         self.worker = asyncio.create_task(self.loop())
         self.wake.set()
 
@@ -132,9 +132,16 @@ class Runner:
     async def loop(self):
         while True:
             self.wake.clear()
+            if self.settings.app_mode == "remote":
+                for task in self.store.tasks(("waiting_rate_limit",)):
+                    if (task.get("resume_at") or 0) <= time.time():
+                        self.store.update(task["id"], status="queued")
             queued = self.store.tasks(("queued",))
             if not queued:
-                await self.wake.wait()
+                try:
+                    await asyncio.wait_for(self.wake.wait(), timeout=1)
+                except TimeoutError:
+                    pass
                 continue
             task_id = queued[0]["id"]
             self.current_id = task_id
@@ -236,6 +243,8 @@ class Runner:
             self.store.update(task_id, status="partial" if failed else "completed", phase="done",
                               completed_at=time.time(), retryable=failed,
                               error={"code": "partial_contributions", "message": "部分用户贡献获取失败，可重试"} if failed else None)
+        except Deferred:
+            pass
         except Cancelled:
             pass
         except GitHubError as error:

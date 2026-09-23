@@ -3,34 +3,42 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Classmates Explorer · Explore Forks</title>
-  <script>document.documentElement.dataset.theme = localStorage.getItem('explorer-theme') === 'light' ? 'light' : 'dark';</script>
-  <link rel="stylesheet" href="/static/style.css?v=9">
-  <script src="/static/app.js?v=9" defer></script>
+  <meta name="referrer" content="no-referrer">
+  <script src="static/config.js" defer></script>
+  <link rel="stylesheet" href="static/style.css?v=9">
+  <script src="static/app.js?v=9" defer></script>
 </head>
 <body>
 <main>
-  <header><a class="header-brand" href="https://github.com/OscarZhang-735/Classmates-Explorer" target="_blank" rel="noopener noreferrer" aria-label="Classmates Explorer GitHub repository" title="Classmates Explorer GitHub repository"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.1c-3.1.68-3.76-1.32-3.76-1.32-.5-1.3-1.23-1.65-1.23-1.65-1.01-.7.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15.99 1.7 2.6 1.2 3.23.92.1-.72.39-1.2.7-1.48-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.95 0 0 .94-.3 3.05 1.15a10.6 10.6 0 0 1 5.55 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.53.23 2.67.11 2.95.72.78 1.15 1.78 1.15 3 0 4.3-2.61 5.24-5.1 5.51.4.34.75 1 .75 2.02V22c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><span class="visually-hidden">GitHub</span></a><div class="header-actions"><button id="theme-toggle" type="button" class="secondary" aria-pressed="true">☀ Light mode</button><label for="language" data-i18n="language">Language</label><select id="language" aria-label="Language"><option value="zh-CN">中文</option><option value="en" selected>English</option></select><a href="/docs" data-i18n="apiDocs">API docs ↗</a></div></header>
+  <header><a class="header-brand" href="https://github.com/OscarZhang-735/Classmates-Explorer" target="_blank" rel="noopener noreferrer" aria-label="Classmates Explorer GitHub repository" title="Classmates Explorer GitHub repository"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.1c-3.1.68-3.76-1.32-3.76-1.32-.5-1.3-1.23-1.65-1.23-1.65-1.01-.7.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15.99 1.7 2.6 1.2 3.23.92.1-.72.39-1.2.7-1.48-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.95 0 0 .94-.3 3.05 1.15a10.6 10.6 0 0 1 5.55 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.53.23 2.67.11 2.95.72.78 1.15 1.78 1.15 3 0 4.3-2.61 5.24-5.1 5.51.4.34.75 1 .75 2.02V22c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><span class="visually-hidden">GitHub</span></a><div class="header-actions"><button id="theme-toggle" type="button" class="secondary" aria-pressed="true">☀ Light mode</button><label for="language" data-i18n="language">Language</label><select id="language" aria-label="Language"><option value="zh-CN">中文</option><option value="en" selected>English</option></select><a id="api-docs" href="docs" data-i18n="apiDocs">API docs ↗</a></div></header>
   <section class="intro"><h1>Classmates Explorer</h1>
     <p data-i18n="intro">Explore public-repo forks, owner profiles, and contributions from the past year.</p></section>
   <form id="query-form"><label for="repo-url" data-i18n="repositoryUrl">公开仓库 URL</label><div class="input-row">
     <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required autocomplete="off">
     <button id="submit" type="submit" data-i18n="explore">探索</button></div>
-    <small id="limit-note" data-limit="{{ limit }}"></small>
-    <details id="token-config" class="token-config"><summary><span data-i18n="tokenConfig">GitHub API settings</span><span id="token-status" class="status-badge" data-configured="{{ 'true' if configured else 'false' }}"></span></summary>
+    <small id="limit-note" data-limit="1000"></small>
+    <details id="token-config" class="token-config"><summary><span data-i18n="tokenConfig">GitHub API settings</span><span id="token-status" class="status-badge" data-configured="false"></span></summary>
       <div class="token-fields input-row"><input id="github-token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Paste a GitHub token" autocomplete="new-password">
       <button id="reveal-token" type="button" class="secondary" data-i18n="showToken">Show token</button>
-      <button id="save-token" type="button" class="secondary" data-i18n="saveToken">Save token</button></div>
+      <button id="save-token" type="button" class="secondary" data-i18n="saveToken">Save token</button><button id="logout" type="button" class="secondary" data-i18n="logout" hidden>Clear credentials and exit</button></div>
+      <p id="session-notice" data-i18n="sessionNotice" hidden></p>
       <div class="mode-setting"><div><label for="unlimited-mode" data-i18n="unlimitedMode">Unlimited mode</label><small data-i18n="unlimitedDescription">Use available GitHub points and continue after each hourly reset.</small></div>
-        <input id="unlimited-mode" type="checkbox" role="switch" data-enabled="{{ 'true' if unlimited_mode else 'false' }}"{% if unlimited_mode %} checked{% endif %}></div>
+        <input id="unlimited-mode" type="checkbox" role="switch" data-enabled="false"></div>
     </details></form>
+  <div id="task-history" class="data-actions" hidden>
+    <label for="history-select" data-i18n="history">My tasks</label><select id="history-select"></select>
+    <button id="history-refresh" type="button" class="secondary" data-i18n="refreshHistory">Refresh</button>
+    <button id="history-prev" type="button" class="secondary" data-i18n="previous">Previous</button>
+    <button id="history-next" type="button" class="secondary" data-i18n="next">Next</button>
+  </div>
   <div class="data-actions"><button id="export-json" type="button" class="secondary icon-button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span data-i18n="exportJson">Export JSON</span></button>
     <button id="export-csv" type="button" class="secondary icon-button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span data-i18n="exportCsv">Export CSV</span></button>
     <button id="import" type="button" class="secondary icon-button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21V9m0 0 4 4m-4-4-4 4M5 5h14"/></svg><span data-i18n="importJson">Import JSON snapshot</span></button>
-    <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="{{ max_import_bytes }}" hidden></div>
+    <input id="import-file" type="file" accept="application/json,.json" data-max-bytes="10485760" hidden></div>
   <p id="error" role="alert" hidden></p>
   <section id="task-panel" hidden aria-live="polite">
     <div class="task-heading"><h2 id="task-title" data-i18n="preparing">准备查询</h2><div>
-      <button id="retry" class="secondary" hidden data-i18n="retry">重试未完成部分</button>
+      <button id="resume-task" type="button" class="secondary" data-i18n="resumeTask" hidden>Resume task</button><button id="retry" class="secondary" hidden data-i18n="retry">重试未完成部分</button>
       <button id="cancel" class="secondary" data-i18n="cancel">取消任务</button></div></div>
     <p id="progress"></p><p id="interval" class="muted"></p><p id="task-notice" class="notice" hidden></p>
     <div class="filters">

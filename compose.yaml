@@ -1,0 +1,68 @@
+name: classmates-explorer
+services:
+  api:
+    image: ${APP_IMAGE:?Set APP_IMAGE to a versioned image tag}
+    build: .
+    restart: unless-stopped
+    environment:
+      APP_MODE: remote
+      GITHUB_TOKEN: ""
+      UNLIMITED_MODE: "false"
+      DATABASE_URL: sqlite:////data/remote.sqlite3
+      SESSION_SECRET: ${SESSION_SECRET:?Set a persistent random SESSION_SECRET}
+      METRICS_ALLOWED_IPS: '["127.0.0.1", "172.30.87.4"]'
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set the exact Pages origin as a JSON array}
+    ports:
+      - "127.0.0.1:18765:8765"
+    volumes:
+      - explorer-data:/data
+    read_only: true
+    mem_limit: 512m
+    memswap_limit: 512m
+    ulimits:
+      core: 0
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      backend:
+        ipv4_address: 172.30.87.3
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  monitor:
+    image: ${APP_IMAGE:?Set APP_IMAGE}
+    restart: unless-stopped
+    command: [python, deploy/monitor.py, --loop]
+    environment:
+      MONITOR_API: http://api:8765
+      DATABASE_PATH: /data/remote.sqlite3
+    volumes:
+      - explorer-data:/data:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      backend:
+        ipv4_address: 172.30.87.4
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.87.0/24
+volumes:
+  explorer-data:
