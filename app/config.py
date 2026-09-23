@@ -1,4 +1,5 @@
 import hashlib
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -7,9 +8,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    app_mode: Literal["remote", "local"] = "remote"
+    session_secret: SecretStr = SecretStr("")
+    allowed_origins: list[str] = []
+    session_ttl_seconds: int = Field(180, ge=60)
+    heartbeat_seconds: int = Field(30, ge=5)
+    session_creations_per_minute: int = Field(5, ge=1)
+    metrics_allowed_ips: list[str] = ["127.0.0.1", "::1"]
+    max_sessions: int = Field(100, ge=1)
+    max_sessions_per_credential: int = Field(10, ge=1)
+
     github_token: SecretStr = SecretStr("")
     unlimited_mode: bool = False
-    database_url: str = "sqlite:///./explorer.sqlite3"
+    database_url: str = "sqlite:///./remote.sqlite3"
     max_forks: int = Field(1000, ge=1, le=1000)
     max_import_bytes: int = Field(10 * 1024 * 1024, ge=1024)
     max_queued_tasks: int = Field(5, ge=1)

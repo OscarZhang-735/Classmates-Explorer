@@ -219,3 +219,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Remote credentials and runtime data
+.env.remote
+remote.sqlite3*
+backups/

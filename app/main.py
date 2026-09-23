@@ -3,6 +3,8 @@ import calendar
 import csv
 import io
 import json
+import shutil
+import re
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -13,7 +15,9 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from app.remote import RemoteCredentials, bearer, identity
 
 from app.config import Settings
 from app.db import ACTIVE, Store
@@ -28,15 +32,34 @@ UNLIMITED_TASK_LIMIT = 2_147_483_647
 
 def create_app(settings: Settings | None = None, transport=None, start_worker=True):
     settings = settings or Settings()
+    remote = settings.app_mode == "remote"
 
     @asynccontextmanager
     async def lifespan(app):
+        if remote:
+            if settings.github_token.get_secret_value() or settings.unlimited_mode:
+                raise RuntimeError("Remote mode forbids GITHUB_TOKEN and UNLIMITED_MODE")
+            if len(settings.session_secret.get_secret_value()) < 32:
+                raise RuntimeError("Remote mode requires a persistent SESSION_SECRET of at least 32 characters")
+            from urllib.parse import urlsplit
+            for origin in settings.allowed_origins:
+                parsed = urlsplit(origin)
+                if parsed.scheme != "https" or not parsed.hostname or (parsed.username is not None or parsed.password is not None or not re.fullmatch(r"[a-zA-Z0-9.-]+", parsed.hostname)) or parsed.path or parsed.query or parsed.fragment or "*" in origin:
+                    raise RuntimeError("ALLOWED_ORIGINS must contain exact HTTPS origins without paths")
         store = Store(settings.database_url)
-        github = GitHubClient(settings, store, transport)
+        if remote and any(not t["credential_id"].startswith("remote:") for t in store.tasks()):
+            store.engine.dispose()
+            raise RuntimeError("Remote mode requires a separate database; import local snapshots instead")
+        github = RemoteCredentials(settings, store, transport) if remote else GitHubClient(settings, store, transport)
         runner = Runner(settings, store, github)
         app.state.store, app.state.runner = store, runner
+        if remote:
+            app.state.credentials = github
+            github.runner = runner
+            github.sweeper = asyncio.create_task(github.sweep())
         app.state.submit_lock = asyncio.Lock()
         app.state.submissions = defaultdict(deque)
+        app.state.responses = deque(maxlen=10000)
         if start_worker:
             await runner.start()
         try:
@@ -48,7 +71,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
     app = FastAPI(title="Classmates Explorer", version="0.1.0", lifespan=lifespan,
                   description="公开仓库的一级 Fork、Owner 资料和近 365 天全站贡献。单进程本地运行。")
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
-    templates = Jinja2Templates(directory=ROOT / "templates")
+
 
     def write_env_value(key: str, value: str):
         env_path = Path(".env")
@@ -68,54 +91,146 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
         temporary.replace(env_path)
 
+    def credential():
+        return identity.get() if remote else settings.credential_id
+
+    def limit_bucket(key, maximum):
+        now = time.monotonic()
+        buckets = app.state.submissions
+        # Bound the map even when public clients churn their IP addresses.
+        for old_key in list(buckets):
+            if not buckets[old_key] or buckets[old_key][-1] <= now - 60:
+                del buckets[old_key]
+        if key not in buckets and len(buckets) >= 10000:
+            raise HTTPException(429, "服务繁忙，请稍后重试", headers={"Retry-After": "60"})
+        bucket = buckets[key]
+        while bucket and bucket[0] <= now - 60:
+            bucket.popleft()
+        if len(bucket) >= maximum:
+            raise HTTPException(429, "任务提交过于频繁", headers={"Retry-After": "60"})
+        bucket.append(now)
+
     @app.middleware("http")
-    async def same_origin(request: Request, call_next):
-        # Local write endpoints must not accept cross-site form/fetch submissions.
+    async def access_control(request: Request, call_next):
         origin = request.headers.get("origin")
-        if request.method == "POST" and origin and origin != str(request.base_url).rstrip("/"):
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "仅允许同源请求"}, status_code=403)
-        return await call_next(request)
+        context = None
+        try:
+            if remote:
+                if origin and origin not in settings.allowed_origins:
+                    raise HTTPException(403, "不允许的请求来源")
+                path = request.url.path
+                protected = (path == "/api/tasks" or path.startswith("/api/tasks/") or
+                             path == "/api/imports" or path.startswith("/api/session/"))
+                if protected and request.method != "OPTIONS":
+                    key = bearer(request)
+                    context = identity.set(await app.state.credentials.authenticate(key))
+            elif request.method == "POST" and origin and origin != str(request.base_url).rstrip("/"):
+                raise HTTPException(403, "仅允许同源请求")
+            response = await call_next(request)
+        except HTTPException as exc:
+            response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        except Exception:
+            response = JSONResponse({"detail": "服务暂时不可用"}, status_code=500)
+        finally:
+            if context is not None:
+                identity.reset(context)
+        if request.url.path.startswith("/api/"):
+            app.state.responses.append((time.monotonic(), response.status_code))
+            response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    if remote:
+        # Added last, CORS wraps auth so 401/403 responses also carry CORS headers.
+        app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins,
+                           allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"],
+                           expose_headers=["Content-Disposition", "Retry-After"], allow_credentials=False)
+
+        @app.post("/api/sessions", status_code=201)
+        async def create_session(request: Request):
+            limit_bucket(("sessions", request.client.host if request.client else "unknown"), settings.session_creations_per_minute)
+            key = await app.state.credentials.create(bearer(request))
+            return {"session_token": key, "expires_in": settings.session_ttl_seconds}
+
+        @app.post("/api/session/heartbeat")
+        async def heartbeat(request: Request):
+            await app.state.credentials.heartbeat(bearer(request))
+            return {"expires_in": settings.session_ttl_seconds}
+
+        @app.post("/api/session/logout")
+        async def logout(request: Request):
+            await app.state.credentials.logout(bearer(request))
+            return {"logged_out": True}
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def home(request: Request):
-        return templates.TemplateResponse(request=request, name="index.html", context={
-            "configured": bool(settings.github_token.get_secret_value()), "limit": settings.max_forks,
-            "unlimited_mode": settings.unlimited_mode,
-            "max_import_bytes": settings.max_import_bytes,
-            "max_import_mb": settings.max_import_bytes // 1024 // 1024})
+    async def home():
+        return HTMLResponse((ROOT / "templates" / "index.html").read_text(encoding="utf-8"))
 
-    @app.get("/api/config/github", include_in_schema=False)
-    async def github_config_status():
-        return {"configured": bool(settings.github_token.get_secret_value()),
-                "unlimited_mode": settings.unlimited_mode}
+    @app.get("/api/config")
+    async def config():
+        return {"mode": settings.app_mode, "configured": not remote and bool(settings.github_token.get_secret_value()),
+                "max_forks": settings.max_forks, "max_import_bytes": settings.max_import_bytes,
+                "unlimited_mode": not remote and settings.unlimited_mode,
+                "heartbeat_seconds": settings.heartbeat_seconds, "session_ttl_seconds": settings.session_ttl_seconds}
 
-    @app.post("/api/config/github", include_in_schema=False)
-    async def configure_github(body: TokenInput):
-        if app.state.store.tasks(ACTIVE):
-            raise HTTPException(409, "任务运行期间不能更换 GitHub Token")
-        token = body.token.get_secret_value()
-        write_env_value("GITHUB_TOKEN", token)
-        settings.github_token = SecretStr(token)
-        app.state.runner.github.update_token(token)
-        return {"configured": True}
+    @app.get("/healthz")
+    async def health():
+        try:
+            with app.state.store.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        except Exception:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return {"status": "ok"}
 
-    @app.post("/api/config/github/unlimited", include_in_schema=False)
-    async def configure_unlimited_mode(body: UnlimitedModeInput):
-        write_env_value("UNLIMITED_MODE", "true" if body.enabled else "false")
-        settings.unlimited_mode = body.enabled
-        return {"enabled": settings.unlimited_mode}
+    @app.get("/internal/metrics", include_in_schema=False)
+    async def metrics(request: Request):
+        if not request.client or request.client.host not in settings.metrics_allowed_ips:
+            raise HTTPException(404, "Not found")
+        from sqlalchemy.engine import make_url
+        database = make_url(settings.database_url).database
+        directory = Path(database).resolve().parent if database and database != ":memory:" else Path.cwd()
+        db_bytes = sum(p.stat().st_size for p in directory.glob(Path(database).name + "*")) if database else 0
+        recent = [status for when, status in app.state.responses if when > time.monotonic() - 300]
+        tasks = app.state.store.tasks()
+        return {"database_bytes": db_bytes, "disk_free_bytes": shutil.disk_usage(directory).free,
+                "queued": sum(t["status"] == "queued" for t in tasks),
+                "waiting": sum(t["status"] == "waiting_rate_limit" for t in tasks),
+                "http_requests_5m": len(recent), "http_5xx_5m": sum(status >= 500 for status in recent),
+                "http_429_5m": sum(status == 429 for status in recent)}
 
-    @app.post("/api/config/github/reveal", include_in_schema=False)
-    async def reveal_github_token():
-        token = settings.github_token.get_secret_value()
-        if not token:
-            raise HTTPException(404, "尚未配置 GitHub Token")
-        return JSONResponse({"token": token}, headers={"Cache-Control": "no-store"})
+    if not remote:
+        @app.get("/api/config/github", include_in_schema=False)
+        async def github_config_status():
+            return {"configured": bool(settings.github_token.get_secret_value()),
+                    "unlimited_mode": settings.unlimited_mode}
+
+        @app.post("/api/config/github", include_in_schema=False)
+        async def configure_github(body: TokenInput):
+            if app.state.store.tasks(ACTIVE):
+                raise HTTPException(409, "任务运行期间不能更换 GitHub Token")
+            token = body.token.get_secret_value()
+            write_env_value("GITHUB_TOKEN", token)
+            settings.github_token = SecretStr(token)
+            app.state.runner.github.update_token(token)
+            return {"configured": True}
+
+        @app.post("/api/config/github/unlimited", include_in_schema=False)
+        async def configure_unlimited_mode(body: UnlimitedModeInput):
+            write_env_value("UNLIMITED_MODE", "true" if body.enabled else "false")
+            settings.unlimited_mode = body.enabled
+            return {"enabled": settings.unlimited_mode}
+
+        @app.post("/api/config/github/reveal", include_in_schema=False)
+        async def reveal_github_token():
+            token = settings.github_token.get_secret_value()
+            if not token:
+                raise HTTPException(404, "尚未配置 GitHub Token")
+            return JSONResponse({"token": token}, headers={"Cache-Control": "no-store"})
 
     def get_task(task_id):
         task = app.state.store.get(task_id)
-        if not task:
+        if not task or (remote and task["credential_id"] != credential()):
             raise HTTPException(404, "任务不存在")
         return task
 
@@ -155,14 +270,14 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
 
     def admission(request):
-        now = time.monotonic()
-        key = request.client.host if request.client else "local"
-        bucket = app.state.submissions[key]
-        while bucket and bucket[0] <= now - 60:
-            bucket.popleft()
-        if len(bucket) >= settings.submissions_per_minute:
-            raise HTTPException(429, "任务提交过于频繁", headers={"Retry-After": "60"})
-        bucket.append(now)
+        limit_bucket(("submit", request.client.host if request.client else "unknown"), settings.submissions_per_minute)
+        if remote:
+            limit_bucket(("credential", credential()), settings.submissions_per_minute)
+
+    def check_credential_queue(exclude=None):
+        if remote and any(t["credential_id"] == credential() and t["id"] != exclude
+                          for t in app.state.store.tasks(ACTIVE)):
+            raise HTTPException(429, "当前凭据已有活动任务", headers={"Retry-After": "30"})
 
     def check_queue():
         if len(app.state.store.tasks(("queued",))) >= settings.max_queued_tasks:
@@ -176,20 +291,40 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
             unlimited = settings.unlimited_mode
             limit = UNLIMITED_TASK_LIMIT if unlimited else settings.max_forks
             for task in reversed(app.state.store.tasks()):
-                if (task["repository_url"] == body.repository_url and task["date"] == today
-                        and task["credential_id"] == settings.credential_id and task["limit"] == limit
+                if (not task.get("imported") and task["repository_url"] == body.repository_url and task["date"] == today
+                        and task["credential_id"] == credential() and task["limit"] == limit
                         and task.get("unlimited", False) == unlimited
                         and task.get("data_version") == 3):
                     cached = (task["status"] == "completed" and
                               time.time() - (task["completed_at"] or 0) < settings.result_cache_seconds)
                     if task["status"] in ACTIVE or cached:
                         return {**public_task(task), "reused": True}
-            if not settings.github_token.get_secret_value():
+            if not remote and not settings.github_token.get_secret_value():
                 raise HTTPException(503, "请先在服务端 .env 中配置 GITHUB_TOKEN")
+            check_credential_queue()
             check_queue()
-            task = app.state.store.create(body.repository_url, settings.credential_id, limit, unlimited)
+            task = app.state.store.create(body.repository_url, credential(), limit, unlimited)
             app.state.runner.wake.set()
             return {**public_task(task), "reused": False}
+
+    @app.get("/api/tasks")
+    async def list_tasks(page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100)):
+        tasks = [t for t in reversed(app.state.store.tasks()) if not remote or t["credential_id"] == credential()]
+        return {"items": [public_task(t) for t in tasks[(page - 1) * per_page:page * per_page]],
+                "total": len(tasks), "page": page, "per_page": per_page}
+
+    @app.post("/api/tasks/{task_id}/resume", status_code=202)
+    async def resume_task(task_id: str, request: Request):
+        async with app.state.submit_lock:
+            task = get_task(task_id)
+            if task["status"] != "paused_credentials" or task.get("imported"):
+                raise HTTPException(409, "任务当前不可恢复")
+            admission(request)
+            check_credential_queue(exclude=task_id)
+            check_queue()
+            task = app.state.store.update(task_id, status="queued", error=None)
+            app.state.runner.wake.set()
+            return public_task(task)
 
     @app.get("/api/tasks/{task_id}")
     async def status(task_id: str):
@@ -334,7 +469,7 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         except ValidationError:
             raise HTTPException(422, "不是有效的 Classmates Explorer v1 JSON 快照") from None
         data = snapshot.model_dump(mode="json", by_alias=True)
-        task = app.state.store.import_snapshot(data)
+        task = app.state.store.import_snapshot(data, credential=credential() if remote else None)
         return public_task(task)
 
     @app.post("/api/tasks/{task_id}/cancel")
@@ -353,15 +488,35 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
                 return public_task(task)
             if task["status"] not in ("partial", "failed", "cancelled") or not task["retryable"]:
                 raise HTTPException(409, "该任务不可重试，请创建新任务")
-            if task["credential_id"] != settings.credential_id:
+            if task["credential_id"] != credential():
                 raise HTTPException(409, "凭据已更换，请创建新任务")
             admission(request)
+            check_credential_queue()
             check_queue()
             # Explicit retry starts a new bounded run, preserving successful rows/cursors.
             task = app.state.store.update(task_id, status="queued", error=None, resume_at=None,
                                           requests=0, points=0, rate_limit_streak=0, completed_at=None)
             app.state.runner.wake.set()
             return public_task(task)
+
+    if remote:
+        original_openapi = app.openapi
+
+        def authenticated_openapi():
+            schema = original_openapi()
+            schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+            schemes.update({
+                "GitHubToken": {"type": "http", "scheme": "bearer", "description": "Your GitHub token; used only to create a session."},
+                "AppSession": {"type": "http", "scheme": "bearer", "description": "session_token returned by POST /api/sessions."},
+            })
+            for path, operations in schema["paths"].items():
+                scheme = "GitHubToken" if path == "/api/sessions" else "AppSession"
+                if path.startswith("/api/tasks") or path.startswith("/api/session") or path == "/api/imports":
+                    for operation in operations.values():
+                        operation["security"] = [{scheme: []}]
+            return schema
+
+        app.openapi = authenticated_openapi
 
     return app
 

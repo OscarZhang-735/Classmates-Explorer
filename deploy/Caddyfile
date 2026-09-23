@@ -1,0 +1,16 @@
+{$API_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+    @internal path /internal /internal/*
+    respond @internal 404
+    request_body {
+        max_size 11MB
+    }
+    # No request bodies or authorization headers are logged.
+    reverse_proxy api:8765 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}

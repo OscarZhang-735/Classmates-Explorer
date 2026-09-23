@@ -92,7 +92,7 @@ class Store:
             session.commit()
         return self.serialize(task)
 
-    def import_snapshot(self, snapshot: dict) -> dict:
+    def import_snapshot(self, snapshot: dict, credential: str | None = None) -> dict:
         now = time.time()
         task_data = snapshot["task"]
         rows = snapshot["results"]
@@ -115,7 +115,7 @@ class Store:
         if not complete:
             payload["error"] = {"code": "imported_partial", "message": "这是未完整完成的导入快照"}
         task = Task(id=task_id, repository_url=task_data["repository_url"],
-                    credential_id=f"import:{task_id}", status=status,
+                    credential_id=credential or f"import:{task_id}", status=status,
                     created_at=now, updated_at=now, payload=payload)
         # One transaction ensures malformed/conflicting data never creates a partial import.
         with self.session() as session:

@@ -44,34 +44,42 @@ class BatchTooLarge(GitHubError):
     pass
 
 
+class Deferred(Exception):
+    """Release the worker while an upstream cooldown is in effect."""
+
+
 class Cancelled(Exception):
     pass
 
 
 class GitHubClient:
-    def __init__(self, settings: Settings, store: Store, transport=None):
+    def __init__(self, settings: Settings, store: Store, transport=None, *, token=None, credential_id=None):
         self.settings, self.store = settings, store
+        self.token = settings.github_token.get_secret_value() if token is None else token
+        self.credential_id = credential_id or settings.credential_id
         self.client = httpx.AsyncClient(
             base_url="https://api.github.com", transport=transport,
-            headers={"Authorization": f"Bearer {settings.github_token.get_secret_value()}",
+            headers={"Authorization": f"Bearer {self.token}",
                      "Accept": "application/vnd.github+json", "User-Agent": "Classmates-Explorer/0.1"},
             timeout=httpx.Timeout(settings.request_timeout, connect=settings.connect_timeout),
             follow_redirects=False)
         self.lock = asyncio.Lock()
         self.last_start = 0.0
-        self.cooldown_key = f"cooldown:{settings.credential_id}"
+        self.cooldown_key = f"cooldown:{self.credential_id}"
 
     def update_token(self, token: str):
+        self.token = token
+        self.credential_id = self.settings.credential_id
         self.client.headers["Authorization"] = f"Bearer {token}"
         self.cooldown_key = f"cooldown:{self.settings.credential_id}"
 
     def check(self, task_id):
         task = self.store.get(task_id)
-        if task["status"] == "cancelled":
+        if task["status"] in ("cancelled", "paused_credentials"):
             raise Cancelled
-        if not self.settings.github_token.get_secret_value():
+        if not self.token:
             raise GitHubError("token_missing", "请在服务端配置 GITHUB_TOKEN", False)
-        if task["credential_id"] != self.settings.credential_id:
+        if task["credential_id"] != self.credential_id:
             raise GitHubError("credential_changed", "凭据已更换，请创建新任务", False)
         return task
 
@@ -88,8 +96,13 @@ class GitHubClient:
 
     async def wait_cooldown(self, task_id):
         value = self.store.cache_get(self.cooldown_key)
+        global_value = self.store.cache_get("cooldown:global") if self.settings.app_mode == "remote" else None
+        if global_value and (not value or global_value["until"] > value["until"]):
+            value = global_value
         if value and value["until"] > time.time():
             self.store.update(task_id, status="waiting_rate_limit", resume_at=value["until"])
+            if self.settings.app_mode == "remote":
+                raise Deferred
             await self.pause(task_id, value["until"] - time.time())
             self.check(task_id)
             self.store.update(task_id, status="running", resume_at=None)
@@ -176,6 +189,8 @@ class GitHubClient:
                                 pass
                     until = max(time.time() + delay, reset + 1 if remaining == 0 else 0)
                     self.cooldown(until)
+                    if self.settings.app_mode == "remote" and remaining != 0:
+                        self.store.cache_put("cooldown:global", {"until": until}, max(1, until - time.time() + 60))
                     if streak >= self.settings.max_consecutive_rate_limits:
                         raise GitHubError("rate_limit_exhausted", "GitHub 持续限流，请稍后重试")
                     continue
@@ -203,6 +218,8 @@ class GitHubClient:
 
     async def close(self):
         await self.client.aclose()
+        self.client.headers.pop("Authorization", None)
+        self.token = ""
 
 
 def collected_at():
