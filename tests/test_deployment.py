@@ -15,10 +15,12 @@ def test_pages_allowlist_and_no_overwrite(tmp_path):
     build("https://api.example.com", tmp_path / "pages")
     root = tmp_path / "pages"
     files = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
-    assert files == {"index.html", "static/app.js", "static/style.css", "static/config.js", ".nojekyll"}
+    assert files == {"index.html", "static/app.js", "static/style.css", "static/favicon.png", "static/config.js", ".nojekyll"}
     html = (root / "index.html").read_text(encoding="utf-8")
     assert '{{' not in html and '{%' not in html
     assert 'src="static/app.js' in html and 'href="static/style.css' in html
+    assert 'rel="icon" type="image/png" href="static/favicon.png"' in html
+    assert (root / "static/favicon.png").read_bytes() == (Path(__file__).resolve().parents[1] / "app/static/favicon.png").read_bytes()
     assert "connect-src https://api.example.com" in html
     assert "script-src 'self'" in html
     with pytest.raises(ValueError, match="empty output"):

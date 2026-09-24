@@ -21,7 +21,7 @@ def build(api_base, output):
     policy = f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src {api_base}; object-src 'none'; base-uri 'none'; form-action 'none'"
     html = html.replace('<meta name="referrer"', f'<meta http-equiv="Content-Security-Policy" content="{policy}">\n  <meta name="referrer"')
     (output / "index.html").write_text(html, encoding="utf-8")
-    for name in ["app.js", "style.css"]:
+    for name in ["app.js", "style.css", "favicon.png"]:
         shutil.copyfile(root / "app/static" / name, output / "static" / name)
     (output / "static/config.js").write_text("window.EXPLORER_CONFIG = " + json.dumps({"apiBase": api_base}) + ";\n", encoding="utf-8")
     (output / ".nojekyll").write_text("", encoding="utf-8")
