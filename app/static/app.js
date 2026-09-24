@@ -15,7 +15,7 @@ const sessionRemove = key => sessionStorage.removeItem(storagePrefix + key);
 const messages = {
   'zh-CN': {
     portfolioStarsBadge:'★ {0}',portfolioStarsTitle:'自有公开非 Fork 仓库中，Stars 最高的最多 10 个仓库合计',
-    rankLabel:'排名第 {0}',
+    rankLabel:'当前排序总榜第 {0} 名',
     scaleScores:'曲线缩放',scaledScoreNote:'缩放分 · 原始 {0}/100',originalScoreDetails:'原始得分明细',
     scaleScoresHint:'按当前筛选结果（跨所有分页）的最高分等比例缩放至 100；全为 0 时保持 0。仅改变总分显示。',
     explorationScore:'探索评分',sortScoreDesc:'探索评分：高 → 低',sortScoreAsc:'探索评分：低 → 高',sortProfessional:'专业信号：高 → 低',sortActivity:'活跃度：高 → 低',
@@ -42,7 +42,7 @@ const messages = {
   },
   en: {
     portfolioStarsBadge:'★ {0}',portfolioStarsTitle:'Stars across up to 10 top owned public non-fork repositories',
-    rankLabel:'Rank {0}',
+    rankLabel:'Overall rank {0} in the current sort',
     scaleScores:'Scale scores',scaledScoreNote:'Scaled · Original {0}/100',originalScoreDetails:'Original score breakdown',
     scaleScoresHint:'Scale proportionally so the highest score across all filtered pages is 100. All-zero scores stay zero. Changes only the displayed total.',
     explorationScore:'Explorer score',sortScoreDesc:'Explorer score: highest first',sortScoreAsc:'Explorer score: lowest first',sortProfessional:'Professional signals: highest first',sortActivity:'Activity: highest first',
@@ -265,8 +265,7 @@ function row(item, rank) {
 }
 function renderResults(result) {
   lastResult = result;
-  const firstRank = (result.page - 1) * result.per_page + 1;
-  $('results').replaceChildren(...result.items.map((item, index) => row(item, firstRank + index)));
+  $('results').replaceChildren(...result.items.map(item => row(item, item.rank ?? '—')));
   if (!result.items.length) { const tr = document.createElement('tr'), td = text('td', t('noResults')); td.colSpan = 5; tr.append(td); $('results').append(tr); }
   $('page-label').textContent = t('pageLabel', result.total, page, Math.max(1,Math.ceil(result.total/50)));
   $('prev').disabled = page <= 1; $('next').disabled = page * 50 >= result.total;
