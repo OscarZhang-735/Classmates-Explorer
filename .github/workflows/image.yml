@@ -1,4 +1,4 @@
-name: Publish backend image
+name: Release
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: backend-image-main
+  group: production-release
   cancel-in-progress: false
 
 jobs:
@@ -94,6 +94,81 @@ jobs:
             echo '## Verified backend image'
             printf '\nTag: `%s`\n\nDigest reference: `%s`\n' "$TAG" "$IMAGE"
             echo ''
-            echo 'The production server and Pages have not been updated.'
+            echo 'Backend deployment and Pages publishing run in subsequent jobs.'
             echo 'On first publication, set package visibility to public and verify anonymous pull.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  backend:
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    outputs:
+      deployed: ${{ steps.deploy.outputs.deployed }}
+    steps:
+      - name: Skip superseded commits
+        id: current
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
+            const current = data.commit.sha === context.sha;
+            core.setOutput('current', String(current));
+            if (!current) core.notice('Skipping deployment: this commit is no longer the main tip.');
+      - uses: actions/checkout@v4
+        if: steps.current.outputs.current == 'true'
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: steps.current.outputs.current == 'true'
+        with:
+          python-version: '3.12'
+      - name: Deploy and verify backend
+        id: deploy
+        if: steps.current.outputs.current == 'true'
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          PAGES_API_BASE: ${{ vars.PAGES_API_BASE }}
+          PAGES_ORIGIN: ${{ vars.PAGES_ORIGIN }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, subprocess, tempfile
+          required = ('DEPLOY_HOST', 'DEPLOY_USER', 'DEPLOY_PATH', 'PAGES_API_BASE',
+                      'PAGES_ORIGIN', 'DEPLOY_SSH_KEY', 'DEPLOY_KNOWN_HOSTS', 'IMAGE')
+          missing = [key for key in required if not os.environ.get(key)]
+          if missing:
+              raise SystemExit('Missing configuration: ' + ', '.join(missing))
+          directory = pathlib.Path(tempfile.mkdtemp(prefix='release-', dir=os.environ['RUNNER_TEMP']))
+          directory.chmod(0o700)
+          for name, key in [('key', 'DEPLOY_SSH_KEY'), ('known_hosts', 'DEPLOY_KNOWN_HOSTS')]:
+              with (directory / name).open('x', opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
+                  f.write(os.environ.pop(key).rstrip() + '\n')
+          subprocess.run([
+              'python', 'scripts/deploy_ssh.py', '--host', os.environ['DEPLOY_HOST'],
+              '--port', os.environ.get('DEPLOY_PORT') or '22', '--user', os.environ['DEPLOY_USER'],
+              '--root', os.environ['DEPLOY_PATH'], '--key', str(directory / 'key'),
+              '--known-hosts', str(directory / 'known_hosts'), '--image', os.environ['IMAGE'],
+              '--api-base', os.environ['PAGES_API_BASE'], '--pages-origin', os.environ['PAGES_ORIGIN'],
+          ], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('deployed=true\n')
+          PY
+
+  pages:
+    needs: backend
+    if: needs.backend.outputs.deployed == 'true' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      api_base: ${{ vars.PAGES_API_BASE }}
