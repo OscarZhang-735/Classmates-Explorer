@@ -1,6 +1,6 @@
-name: Publish Pages manually
+name: Publish Pages after backend
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       api_base:
         description: HTTPS API origin, e.g. https://api.example.com (no trailing slash)
@@ -8,20 +8,19 @@ on:
         type: string
 permissions:
   contents: read
-concurrency:
-  group: pages
-  cancel-in-progress: false
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install '.[test]'
-      - run: python -m pytest -q
-      - run: node --check app/static/app.js
       - name: Build public files only
         env:
           PAGES_API_BASE: ${{ inputs.api_base }}
@@ -32,13 +31,24 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Skip superseded Pages releases, including old reruns
+        id: current
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
+            core.setOutput('current', String(data.commit.sha === context.sha));
+            if (data.commit.sha !== context.sha) core.notice('Skipping outdated Pages release. Run Release on current main.');
       - name: Deploy Pages
         id: deployment
+        if: steps.current.outputs.current == 'true'
         uses: actions/deploy-pages@v4
