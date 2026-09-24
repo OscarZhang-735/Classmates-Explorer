@@ -292,3 +292,20 @@ def test_session_upstream_rate_limits(tmp_path, status, body, headers):
         assert "retry-after" in result.headers
         assert app.state.store.cache_get("cooldown:global")
         assert not app.state.credentials.clients
+
+
+def test_mixed_case_config_matches_browser_origin(tmp_path):
+    origin = "https://oscarzhang-735.github.io"
+    cfg = config(tmp_path, allowed_origins=["https://OscarZhang-735.github.io", origin])
+    assert cfg.allowed_origins == [origin]
+    app = create_app(cfg, httpx.MockTransport(Upstream()), start_worker=False)
+    with TestClient(app) as client:
+        response = client.get("/api/config", headers={"Origin": origin})
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+        preflight = client.options("/api/tasks", headers={
+            "Origin": origin, "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"})
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == origin
+        assert client.get("/api/config", headers={"Origin": "https://evil.github.io"}).status_code == 403

@@ -1,7 +1,8 @@
 import hashlib
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,20 @@ class Settings(BaseSettings):
     result_cache_seconds: int = Field(3600, ge=0)
     owner_cache_seconds: int = Field(86400, ge=0)
     contribution_cache_seconds: int = Field(21600, ge=0)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def canonicalize_origins(cls, origins: list[str]) -> list[str]:
+        # Browsers serialize origin hostnames in lowercase. Apply the same form
+        # before both the access middleware and Starlette's exact CORS matching.
+        # Keep paths/query/fragments intact so startup validation still rejects them.
+        normalized = []
+        for origin in origins:
+            parsed = urlsplit(origin)
+            value = parsed._replace(netloc=parsed.netloc.lower()).geturl()
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
 
     @property
     def credential_id(self) -> str:

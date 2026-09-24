@@ -344,6 +344,28 @@ def test_result_sorting_and_date_filters(tmp_path):
         for (sort, direction), ids in expected.items():
             items = client.get(url, params={"sort": sort, "direction": direction}).json()["items"]
             assert [row["id"] for row in items] == ids
+            assert [row["rank"] for row in items] == [1, 2, 3]
+            matched = client.get(url, params={"sort": sort, "direction": direction, "search": "USER-f1"}).json()
+            assert matched["total"] == 1
+            assert matched["items"][0]["rank"] == ids.index("F1") + 1
+            paged = client.get(url, params={"sort": sort, "direction": direction, "search": "user", "page": 2, "per_page": 1}).json()
+            assert paged["items"][0]["rank"] == 2
+
+        dated = client.get(url, params={"sort": "stars", "direction": "desc", "search": "f2",
+                                       "account_created_from": "2019-01-01"}).json()
+        assert dated["items"][0]["rank"] == 1
+        for filters in (
+            {"account_created_to": "2020-12-31"},
+            {"fork_created_from": "2021-01-01"},
+            {"account_created_to": "2020-12-31", "fork_created_from": "2021-01-01"},
+        ):
+            params = {"sort": "stars", "direction": "desc", **filters}
+            leaderboard = client.get(url, params=params).json()["items"]
+            assert [(row["id"], row["rank"]) for row in leaderboard] == [("F1", 1), ("F2", 2)]
+            searched = client.get(url, params={**params, "search": "f2"}).json()["items"]
+            assert [(row["id"], row["rank"]) for row in searched] == [("F2", 2)]
+        assert client.get(url, params={"search": "absent"}).json()["items"] == []
+        assert all("rank" not in row for row in client.app.state.store.rows(task["id"]))
 
         result = client.get(url, params={"account_created_from": "2019-01-01",
                                          "account_created_to": "2020-12-31"}).json()
@@ -418,7 +440,8 @@ def test_export_import_roundtrip_and_csv_safety(tmp_path):
         assert task["id"] != created["id"] and task["status"] == "completed"
         assert task["imported"] is True and task["retryable"] is False
         items = client.get(f"/api/tasks/{task['id']}/results").json()["items"]
-        assert items == snapshot["results"]
+        assert [item["rank"] for item in items] == list(range(1, len(items) + 1))
+        assert [{k: v for k, v in item.items() if k != "rank"} for item in items] == snapshot["results"]
         assert client.post(f"/api/tasks/{task['id']}/retry").status_code == 409
 
         exported_csv = client.get(f"/api/tasks/{created['id']}/export?format=csv")

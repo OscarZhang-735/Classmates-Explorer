@@ -361,7 +361,6 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         if fork_from and fork_to and fork_from > fork_to:
             raise HTTPException(422, "Fork 创建时间的起始日期不能晚于结束日期")
         rows = app.state.store.rows(task_id)
-        rows = [r for r in rows if search.casefold() in r["owner"]["login"].casefold()]
 
         def parsed_date(value):
             if not value:
@@ -396,6 +395,10 @@ def create_app(settings: Settings | None = None, transport=None, start_worker=Tr
         unknown = [row for row in rows if getter(row) is None]
         known.sort(key=lambda row: (getter(row), row["id"]), reverse=direction == "desc")
         rows = known + sorted(unknown, key=lambda row: row["id"])
+        # Rank the date-filtered leaderboard before username search and pagination.
+        rows = [{**row, "rank": rank} for rank, row in enumerate(rows, start=1)]
+        rows = [r for r in rows if search.casefold() in r["owner"]["login"].casefold()]
+
         return {"items": rows[(page - 1) * per_page:page * per_page], "total": len(rows),
                 "page": page, "per_page": per_page,
                 "max_score": max((r["score"]["total"] for r in rows if r["score"]["total"] is not None), default=None)}

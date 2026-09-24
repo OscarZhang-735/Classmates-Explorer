@@ -5,7 +5,7 @@ from datetime import timedelta
 from app.config import Settings
 from app.db import ACTIVE, Store
 from app.github import (CONTRIBUTIONS, FORKS, META, BatchTooLarge, Cancelled,
-                        GitHubClient, GitHubError, Deferred, collected_at)
+                        GitHubClient, GitHubError, ForkPageTooLarge, Deferred, collected_at)
 from app.scoring import timestamp
 
 
@@ -202,12 +202,18 @@ class Runner:
             while not task["forks_done"]:
                 self.store.update(task_id, phase="forks")
                 existing = {row["id"] for row in self.store.rows(task_id)}
-                count = min(100, task["limit"] - len(existing))
+                count = min(task.get("fork_page_size", 100), task["limit"] - len(existing))
                 if count <= 0:
                     self.store.update(task_id, forks_done=True, truncated=True)
                     break
-                result = await self.github.query(task_id, FORKS, {
-                    "owner": owner, "repo": repo, "cursor": task["cursor"], "count": count})
+                try:
+                    result = await self.github.query(task_id, FORKS, {
+                        "owner": owner, "repo": repo, "cursor": task["cursor"], "count": count})
+                except ForkPageTooLarge:
+                    # Keep the last committed cursor and rows. Persist the smaller
+                    # size so rate-limit pauses, restarts and explicit retries use it.
+                    task = self.store.update(task_id, fork_page_size=max(1, count // 2))
+                    continue
                 self.github.check(task_id)
                 repository = result["data"].get("repository")
                 self.require_public(repository)
