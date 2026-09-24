@@ -149,7 +149,8 @@ jobs:
           directory = pathlib.Path(tempfile.mkdtemp(prefix='release-', dir=os.environ['RUNNER_TEMP']))
           directory.chmod(0o700)
           for name, key in [('key', 'DEPLOY_SSH_KEY'), ('known_hosts', 'DEPLOY_KNOWN_HOSTS')]:
-              with (directory / name).open('x', opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
+              fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(fd, 'w') as f:
                   f.write(os.environ.pop(key).rstrip() + '\n')
           subprocess.run([
               'python', 'scripts/deploy_ssh.py', '--host', os.environ['DEPLOY_HOST'],
